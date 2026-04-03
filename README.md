@@ -2,7 +2,7 @@ Dataset
 
 [text] -> [category]  [country]   [conflict relevant]
               |            |                |
-              |      can be N/A        true / false
+              |      can be N/A        true / false / N/A
               |            |                |
               -------|     |                |
 weights of reward:  0.3   0.2              0.5
