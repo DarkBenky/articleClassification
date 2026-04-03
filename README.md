@@ -1,11 +1,11 @@
 Dataset
 
-[text] -> [category]  [country]   [conflict relevant]
-              |            |                |
-              |      can be N/A        true / false / N/A
-              |            |                |
-              -------|     |                |
-weights of reward:  0.3   0.2              0.5
+[text] -> [category]  [country]
+              |            |
+              |      can be N/A
+              |            |
+              -------|     |
+weights of reward:  0.5   0.5
 
 Relevant links:
 - [ ] https://huggingface.co/datasets/dwb2023/gdelt-event-2025-v4
