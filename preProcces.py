@@ -286,47 +286,47 @@ def preProcess():
     logging.info(f"bbc-news: {written} written (total so far: {total_processed})")
 
 
-    # logging.info("Loading rjjan/reuters21578 (ModApte) ...")
-    # ds = load_dataset("rjjan/reuters21578", "ModApte", cache_dir='/media/user/2TB/huggingface_cache')
-    # written = 0
-    # for row in tqdm(ds['train'], desc='reuters/ModApte'):
-    #     if "text" in row and "topics" in row and len(row['topics']) > 0:
-    #         category = row['topics'][0]
-    #         article_text = row['text']
-    #         sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
-    #         with open('preprocessed_data.txt', 'a') as f:
-    #             f.write(str(sample) + '\n')
-    #         written += 1
-    # total_processed += written
-    # logging.info(f"reuters/ModApte: {written} written (total so far: {total_processed})")
+    logging.info("Loading rjjan/reuters21578 (ModApte) ...")
+    ds = load_dataset("parquet", data_files={"train": "hf://datasets/rjjan/reuters21578@refs/convert/parquet/ModApte/train/*.parquet"}, cache_dir='/media/user/2TB/huggingface_cache')
+    written = 0
+    for row in tqdm(ds['train'], desc='reuters/ModApte'):
+        if "text" in row and "topics" in row and len(row['topics']) > 0:
+            category = row['topics'][0]
+            article_text = row['text']
+            sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
+            with open('preprocessed_data.txt', 'a') as f:
+                f.write(str(sample) + '\n')
+            written += 1
+    total_processed += written
+    logging.info(f"reuters/ModApte: {written} written (total so far: {total_processed})")
 
-    # logging.info("Loading rjjan/reuters21578 (ModHayes) ...")
-    # ds = load_dataset("rjjan/reuters21578", "ModHayes", cache_dir='/media/user/2TB/huggingface_cache')
-    # written = 0
-    # for row in tqdm(ds['train'], desc='reuters/ModHayes'):
-    #     if "text" in row and "topics" in row and len(row['topics']) > 0:
-    #         category = row['topics'][0]
-    #         article_text = row['text']
-    #         sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
-    #         with open('preprocessed_data.txt', 'a') as f:
-    #             f.write(str(sample) + '\n')
-    #         written += 1
-    # total_processed += written
-    # logging.info(f"reuters/ModHayes: {written} written (total so far: {total_processed})")
+    logging.info("Loading rjjan/reuters21578 (ModHayes) ...")
+    ds = load_dataset("parquet", data_files={"train": "hf://datasets/rjjan/reuters21578@refs/convert/parquet/ModHayes/train/*.parquet"}, cache_dir='/media/user/2TB/huggingface_cache')
+    written = 0
+    for row in tqdm(ds['train'], desc='reuters/ModHayes'):
+        if "text" in row and "topics" in row and len(row['topics']) > 0:
+            category = row['topics'][0]
+            article_text = row['text']
+            sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
+            with open('preprocessed_data.txt', 'a') as f:
+                f.write(str(sample) + '\n')
+            written += 1
+    total_processed += written
+    logging.info(f"reuters/ModHayes: {written} written (total so far: {total_processed})")
 
-    # logging.info("Loading rjjan/reuters21578 (ModLewis) ...")
-    # ds = load_dataset("rjjan/reuters21578", "ModLewis", cache_dir='/media/user/2TB/huggingface_cache')
-    # written = 0
-    # for row in tqdm(ds['train'], desc='reuters/ModLewis'):
-    #     if "text" in row and "topics" in row and len(row['topics']) > 0:
-    #         category = row['topics'][0]
-    #         article_text = row['text']
-    #         sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
-    #         with open('preprocessed_data.txt', 'a') as f:
-    #             f.write(str(sample) + '\n')
-    #         written += 1
-    # total_processed += written
-    # logging.info(f"reuters/ModLewis: {written} written (total so far: {total_processed})")
+    logging.info("Loading rjjan/reuters21578 (ModLewis) ...")
+    ds = load_dataset("parquet", data_files={"train": "hf://datasets/rjjan/reuters21578@refs/convert/parquet/ModLewis/train/*.parquet"}, cache_dir='/media/user/2TB/huggingface_cache')
+    written = 0
+    for row in tqdm(ds['train'], desc='reuters/ModLewis'):
+        if "text" in row and "topics" in row and len(row['topics']) > 0:
+            category = row['topics'][0]
+            article_text = row['text']
+            sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
+            with open('preprocessed_data.txt', 'a') as f:
+                f.write(str(sample) + '\n')
+            written += 1
+    total_processed += written
+    logging.info(f"reuters/ModLewis: {written} written (total so far: {total_processed})")
 
     logging.info(f"=== DONE. Total samples written: {total_processed} ===")
 
