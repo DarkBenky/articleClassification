@@ -48,40 +48,40 @@ def preProcess():
 
     codes = dict(zip(codes_df['Code'], codes_df['Description']))
 
-    logging.info("Loading dwb2023/gdelt-event-2025-v4 ...")
-    ds = load_dataset("dwb2023/gdelt-event-2025-v4", cache_dir='/media/user/2TB/huggingface_cache')
-    gdelt_raw_path = f'{RAW_DIR}/gdelt-event.jsonl'
-    already_fetched_gdelt = set()
-    if os.path.exists(gdelt_raw_path):
-        with open(gdelt_raw_path) as f:
-            for line in f:
-                try:
-                    already_fetched_gdelt.add(json.loads(line)['url'])
-                except Exception:
-                    pass
-    logging.info(f"gdelt-event: {len(already_fetched_gdelt)} URLs already saved, scanning for remaining ...")
-    pending_gdelt = []
-    for row in tqdm(ds['train'], desc='gdelt-event scan'):
-        if row['SOURCEURL'] not in already_fetched_gdelt:
-            pending_gdelt.append((row['SOURCEURL'], row['EventCode'], row['ActionGeo_CountryCode']))
-    logging.info(f"gdelt-event: {len(pending_gdelt)} URLs to fetch")
-    written = 0
-    with open(gdelt_raw_path, 'a') as raw_f, open('preprocessed_data.txt', 'a') as out_f:
-        with tqdm(total=len(pending_gdelt), desc='gdelt-event', unit='url') as pbar:
-            for i in range(0, len(pending_gdelt), 500):
-                chunk = pending_gdelt[i:i + 500]
-                texts = asyncio.run(_fetch_all([u for u, _, _ in chunk]))
-                for (url, event_code, location), text in zip(chunk, texts):
-                    if text:
-                        raw_f.write(json.dumps({'url': url, 'text': text, 'EventCode': event_code, 'location': location}) + '\n')
-                        label = codes.get(event_code, event_code)
-                        out_f.write(str({'text': text, 'label': label, 'location': location}) + '\n')
-                        written += 1
-                raw_f.flush()
-                out_f.flush()
-                pbar.update(len(chunk))
-    total_processed += written
-    logging.info(f"gdelt-event: {written} new articles saved to {gdelt_raw_path} (total so far: {total_processed})")
+    # logging.info("Loading dwb2023/gdelt-event-2025-v4 ...")
+    # ds = load_dataset("dwb2023/gdelt-event-2025-v4", cache_dir='/media/user/2TB/huggingface_cache')
+    # gdelt_raw_path = f'{RAW_DIR}/gdelt-event.jsonl'
+    # already_fetched_gdelt = set()
+    # if os.path.exists(gdelt_raw_path):
+    #     with open(gdelt_raw_path) as f:
+    #         for line in f:
+    #             try:
+    #                 already_fetched_gdelt.add(json.loads(line)['url'])
+    #             except Exception:
+    #                 pass
+    # logging.info(f"gdelt-event: {len(already_fetched_gdelt)} URLs already saved, scanning for remaining ...")
+    # pending_gdelt = []
+    # for row in tqdm(ds['train'], desc='gdelt-event scan'):
+    #     if row['SOURCEURL'] not in already_fetched_gdelt:
+    #         pending_gdelt.append((row['SOURCEURL'], row['EventCode'], row['ActionGeo_CountryCode']))
+    # logging.info(f"gdelt-event: {len(pending_gdelt)} URLs to fetch")
+    # written = 0
+    # with open(gdelt_raw_path, 'a') as raw_f, open('preprocessed_data.txt', 'a') as out_f:
+    #     with tqdm(total=len(pending_gdelt), desc='gdelt-event', unit='url') as pbar:
+    #         for i in range(0, len(pending_gdelt), 500):
+    #             chunk = pending_gdelt[i:i + 500]
+    #             texts = asyncio.run(_fetch_all([u for u, _, _ in chunk]))
+    #             for (url, event_code, location), text in zip(chunk, texts):
+    #                 raw_f.write(json.dumps({'url': url, 'text': text, 'EventCode': event_code, 'location': location}) + '\n')
+    #                 if text:
+    #                     label = codes.get(event_code, event_code)
+    #                     out_f.write(str({'text': text, 'label': label, 'location': location}) + '\n')
+    #                     written += 1
+    #             raw_f.flush()
+    #             out_f.flush()
+    #             pbar.update(len(chunk))
+    # total_processed += written
+    # logging.info(f"gdelt-event: {written} new articles saved to {gdelt_raw_path} (total so far: {total_processed})")
 
     logging.info("Loading NEWS_CATEGORY.json ...")
     news_raw_path = f'{RAW_DIR}/news-category.jsonl'
@@ -93,7 +93,15 @@ def preProcess():
                     already_fetched_news.add(json.loads(line)['url'])
                 except Exception:
                     pass
-    news = json.load(open('NEWS_CATEGORY.json'))
+    news = []
+    with open('NEWS_CATEGORY.json') as nf:
+        for line in nf:
+            line = line.strip()
+            if line:
+                try:
+                    news.append(json.loads(line))
+                except Exception:
+                    pass
     all_news_items = [(item['link'], item['category']) for item in news if 'link' in item and 'category' in item]
     pending_news = [(url, cat) for url, cat in all_news_items if url not in already_fetched_news]
     logging.info(f"NEWS_CATEGORY: {len(already_fetched_news)} already saved, {len(pending_news)} remaining")
@@ -104,8 +112,8 @@ def preProcess():
                 chunk = pending_news[i:i + 500]
                 texts = asyncio.run(_fetch_all([u for u, _ in chunk]))
                 for (url, category), text in zip(chunk, texts):
+                    raw_f.write(json.dumps({'url': url, 'text': text, 'category': category}) + '\n')
                     if text:
-                        raw_f.write(json.dumps({'url': url, 'text': text, 'category': category}) + '\n')
                         out_f.write(str({'text': text, 'label': category, 'location': 'Unknown'}) + '\n')
                         written += 1
                 raw_f.flush()
@@ -195,19 +203,19 @@ def preProcess():
     total_processed += written
     logging.info(f"twitter-financial-news-topic: {written} written (total so far: {total_processed})")
     
-    logging.info("Loading stanford-oval/ccnews (2024) ...")
-    ds = load_dataset("stanford-oval/ccnews", "2024", cache_dir='/media/user/2TB/huggingface_cache')
-    written = 0
-    for row in tqdm(ds['train'], desc='ccnews/2024'):
-        if "plain_text" in row and "categories" in row:
-            category = row['categories'].split(',')[0].strip() if row['categories'] else 'Unknown'
-            article_text = row['plain_text']
-            sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
-            with open('preprocessed_data.txt', 'a') as f:
-                f.write(str(sample) + '\n')
-            written += 1
-    total_processed += written
-    logging.info(f"ccnews/2024: {written} written (total so far: {total_processed})")
+    # logging.info("Loading stanford-oval/ccnews (2024) ...")
+    # ds = load_dataset("stanford-oval/ccnews", "2024", cache_dir='/media/user/2TB/huggingface_cache')
+    # written = 0
+    # for row in tqdm(ds['train'], desc='ccnews/2024'):
+    #     if "plain_text" in row and "categories" in row:
+    #         category = row['categories'].split(',')[0].strip() if row['categories'] else 'Unknown'
+    #         article_text = row['plain_text']
+    #         sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
+    #         with open('preprocessed_data.txt', 'a') as f:
+    #             f.write(str(sample) + '\n')
+    #         written += 1
+    # total_processed += written
+    # logging.info(f"ccnews/2024: {written} written (total so far: {total_processed})")
 
     logging.info("Loading dwb2023/gdelt-gkg-march2020-v2 ...")
     ds = load_dataset("dwb2023/gdelt-gkg-march2020-v2", cache_dir='/media/user/2TB/huggingface_cache')
@@ -234,8 +242,8 @@ def preProcess():
                 chunk = pending_gkg[i:i + 500]
                 texts = asyncio.run(_fetch_all([u for u, _, _ in chunk]))
                 for (url, themes, locations), text in zip(chunk, texts):
+                    raw_f.write(json.dumps({'url': url, 'text': text, 'themes': themes, 'locations': locations}) + '\n')
                     if text:
-                        raw_f.write(json.dumps({'url': url, 'text': text, 'themes': themes, 'locations': locations}) + '\n')
                         category = themes.split(';')[0].split(',')[0]
                         loc_parts = locations.split(';')[0].split('#')
                         location = loc_parts[1] if len(loc_parts) > 1 else 'Unknown'
@@ -278,48 +286,47 @@ def preProcess():
     logging.info(f"bbc-news: {written} written (total so far: {total_processed})")
 
 
-    logging.info("Loading rjjan/reuters21578 (ModApte) ...")
-    ds = load_dataset("rjjan/reuters21578", "ModApte", cache_dir='/media/user/2TB/huggingface_cache')
-    written = 0
-    for row in tqdm(ds['train'], desc='reuters/ModApte'):
-        if "text" in row and "topics" in row and len(row['topics']) > 0:
-            category = row['topics'][0]
-            article_text = row['text']
-            sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
-            with open('preprocessed_data.txt', 'a') as f:
-                f.write(str(sample) + '\n')
-            written += 1
-    total_processed += written
-    logging.info(f"reuters/ModApte: {written} written (total so far: {total_processed})")
-            
+    # logging.info("Loading rjjan/reuters21578 (ModApte) ...")
+    # ds = load_dataset("rjjan/reuters21578", "ModApte", cache_dir='/media/user/2TB/huggingface_cache')
+    # written = 0
+    # for row in tqdm(ds['train'], desc='reuters/ModApte'):
+    #     if "text" in row and "topics" in row and len(row['topics']) > 0:
+    #         category = row['topics'][0]
+    #         article_text = row['text']
+    #         sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
+    #         with open('preprocessed_data.txt', 'a') as f:
+    #             f.write(str(sample) + '\n')
+    #         written += 1
+    # total_processed += written
+    # logging.info(f"reuters/ModApte: {written} written (total so far: {total_processed})")
 
-    logging.info("Loading rjjan/reuters21578 (ModHayes) ...")
-    ds = load_dataset("rjjan/reuters21578", "ModHayes", cache_dir='/media/user/2TB/huggingface_cache')
-    written = 0
-    for row in tqdm(ds['train'], desc='reuters/ModHayes'):
-        if "text" in row and "topics" in row and len(row['topics']) > 0:
-            category = row['topics'][0]
-            article_text = row['text']
-            sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
-            with open('preprocessed_data.txt', 'a') as f:
-                f.write(str(sample) + '\n')
-            written += 1
-    total_processed += written
-    logging.info(f"reuters/ModHayes: {written} written (total so far: {total_processed})")
+    # logging.info("Loading rjjan/reuters21578 (ModHayes) ...")
+    # ds = load_dataset("rjjan/reuters21578", "ModHayes", cache_dir='/media/user/2TB/huggingface_cache')
+    # written = 0
+    # for row in tqdm(ds['train'], desc='reuters/ModHayes'):
+    #     if "text" in row and "topics" in row and len(row['topics']) > 0:
+    #         category = row['topics'][0]
+    #         article_text = row['text']
+    #         sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
+    #         with open('preprocessed_data.txt', 'a') as f:
+    #             f.write(str(sample) + '\n')
+    #         written += 1
+    # total_processed += written
+    # logging.info(f"reuters/ModHayes: {written} written (total so far: {total_processed})")
 
-    logging.info("Loading rjjan/reuters21578 (ModLewis) ...")
-    ds = load_dataset("rjjan/reuters21578", "ModLewis", cache_dir='/media/user/2TB/huggingface_cache')
-    written = 0
-    for row in tqdm(ds['train'], desc='reuters/ModLewis'):
-        if "text" in row and "topics" in row and len(row['topics']) > 0:
-            category = row['topics'][0]
-            article_text = row['text']
-            sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
-            with open('preprocessed_data.txt', 'a') as f:
-                f.write(str(sample) + '\n')
-            written += 1
-    total_processed += written
-    logging.info(f"reuters/ModLewis: {written} written (total so far: {total_processed})")
+    # logging.info("Loading rjjan/reuters21578 (ModLewis) ...")
+    # ds = load_dataset("rjjan/reuters21578", "ModLewis", cache_dir='/media/user/2TB/huggingface_cache')
+    # written = 0
+    # for row in tqdm(ds['train'], desc='reuters/ModLewis'):
+    #     if "text" in row and "topics" in row and len(row['topics']) > 0:
+    #         category = row['topics'][0]
+    #         article_text = row['text']
+    #         sample = {'text': article_text, 'label': category, 'location': 'Unknown'}
+    #         with open('preprocessed_data.txt', 'a') as f:
+    #             f.write(str(sample) + '\n')
+    #         written += 1
+    # total_processed += written
+    # logging.info(f"reuters/ModLewis: {written} written (total so far: {total_processed})")
 
     logging.info(f"=== DONE. Total samples written: {total_processed} ===")
 
