@@ -43,9 +43,12 @@ if __name__ == "__main__":
     plt.ylabel("Counts")
     # save figure
     plt.savefig("top_categories.png")
+    plt.clf()
 
     # show top 20 locations
-    sorted_locations = sorted(unique_locations.items(), key=lambda x: x[1], reverse=True)[:20]
+    plt.clf()
+    filtered_locations = {k: v for k, v in unique_locations.items() if k is not None}
+    sorted_locations = sorted(filtered_locations.items(), key=lambda x: x[1], reverse=True)[:20]
     locations, counts = zip(*sorted_locations)
     plt.bar(locations, counts)
     plt.xticks(rotation=90)
