@@ -1,0 +1,61 @@
+Loaded 10000 data points
+/home/user/anaconda3/lib/python3.13/site-packages/keras/src/layers/core/embedding.py:103: UserWarning: Argument `input_length` is deprecated. Just remove it.
+  warnings.warn(
+[1mModel: "sequential"[0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃[1m [0m[1mLayer (type)                        [0m[1m [0m┃[1m [0m[1mOutput Shape               [0m[1m [0m┃[1m [0m[1m        Param #[0m[1m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ embedding ([38;5;33mEmbedding[0m)                │ ?                           │     [38;5;34m0[0m (unbuilt) │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ conv1d ([38;5;33mConv1D[0m)                      │ ?                           │     [38;5;34m0[0m (unbuilt) │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ global_max_pooling1d                 │ ?                           │               [38;5;34m0[0m │
+│ ([38;5;33mGlobalMaxPooling1D[0m)                 │                             │                 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dropout ([38;5;33mDropout[0m)                    │ ?                           │               [38;5;34m0[0m │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ conv1d_1 ([38;5;33mConv1D[0m)                    │ ?                           │     [38;5;34m0[0m (unbuilt) │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ global_max_pooling1d_1               │ ?                           │               [38;5;34m0[0m │
+│ ([38;5;33mGlobalMaxPooling1D[0m)                 │                             │                 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dropout_1 ([38;5;33mDropout[0m)                  │ ?                           │               [38;5;34m0[0m │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dense ([38;5;33mDense[0m)                        │ ?                           │     [38;5;34m0[0m (unbuilt) │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dropout_2 ([38;5;33mDropout[0m)                  │ ?                           │               [38;5;34m0[0m │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dense_1 ([38;5;33mDense[0m)                      │ ?                           │     [38;5;34m0[0m (unbuilt) │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dropout_3 ([38;5;33mDropout[0m)                  │ ?                           │               [38;5;34m0[0m │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dense_2 ([38;5;33mDense[0m)                      │ ?                           │     [38;5;34m0[0m (unbuilt) │
+└──────────────────────────────────────┴─────────────────────────────┴─────────────────┘
+[1m Total params: [0m[38;5;34m0[0m (0.00 B)
+[1m Trainable params: [0m[38;5;34m0[0m (0.00 B)
+[1m Non-trainable params: [0m[38;5;34m0[0m (0.00 B)
+Processed 1000/10000 data points
+Processed 2000/10000 data points
+Processed 3000/10000 data points
+Processed 4000/10000 data points
+Processed 5000/10000 data points
+Processed 6000/10000 data points
+Processed 7000/10000 data points
+Processed 8000/10000 data points
+Processed 9000/10000 data points
+Filtered to 9668 data points
+TensorFlow and JAX classes are deprecated and will be removed in Transformers v5. We recommend migrating to PyTorch classes or pinning your version of Transformers.
+[34m[1mwandb[0m: [33mWARNING[0m WandbCallback is deprecated and will be removed in a future release. Please use the WandbMetricsLogger, WandbModelCheckpoint, and WandbEvalCallback callbacks instead. See https://docs.wandb.ai/guides/integrations/keras for more information.
+[34m[1mwandb[0m: [33mWARNING[0m The save_model argument by default saves the model in the HDF5 format that cannot save custom objects like subclassed models and custom layers. This behavior will be deprecated in a future release in favor of the SavedModel format. Meanwhile, the HDF5 model is saved as W&B files and the SavedModel as W&B Artifacts.
+Epoch 1/10
+Traceback (most recent call last):
+  File "/home/user/Desktop/articleClassification/locationModel.py", line 101, in <module>
+    model.fit(X, y, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_split=0.1, callbacks=[wandb.keras.WandbCallback()])
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/anaconda3/lib/python3.13/site-packages/keras/src/utils/traceback_utils.py", line 122, in error_handler
+    raise e.with_traceback(filtered_tb) from None
+  File "/home/user/anaconda3/lib/python3.13/site-packages/keras/src/layers/input_spec.py", line 203, in assert_input_compatibility
+    raise ValueError(
+    ...<5 lines>...
+    )
+ValueError: Input 0 with name 'None' of layer 'conv1d_1' is incompatible with the layer: expected min_ndim=3, found ndim=2. Full shape received: (None, 128)

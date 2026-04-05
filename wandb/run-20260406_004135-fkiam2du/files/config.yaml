@@ -1,0 +1,75 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            g6aq3lzrb1xdng9iqrjyq3ywo147ra0s:
+                codePath: locationModel.py
+                codePathLocal: locationModel.py
+                cpu_count: 16
+                cpu_count_logical: 32
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "243885932544"
+                        used: "168278466560"
+                email: matus.benky@gmail.com
+                executable: /home/user/anaconda3/bin/python
+                git:
+                    commit: 3ac264271c8f56bf1dead5233d61cd941119367b
+                    remote: https://github.com/DarkBenky/articleClassification.git
+                gpu: NVIDIA GeForce RTX 3090
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 10496
+                      memoryTotal: "25769803776"
+                      name: NVIDIA GeForce RTX 3090
+                      uuid: GPU-4719cf90-a4e4-4859-2e53-bfd7c9dcd8aa
+                host: user-System-Product-Name
+                memory:
+                    total: "134971326464"
+                os: Linux-6.17.0-20-generic-x86_64-with-glibc2.39
+                program: /home/user/Desktop/articleClassification/locationModel.py
+                python: CPython 3.13.9
+                root: /home/user/Desktop/articleClassification
+                startedAt: "2026-04-05T22:41:35.422903Z"
+                writerId: g6aq3lzrb1xdng9iqrjyq3ywo147ra0s
+        m:
+            - "1": epoch/epoch
+              "6":
+                - 3
+              "7": []
+            - "2": epoch/*
+              "5": 1
+              "6":
+                - 1
+              "7": []
+        python_version: 3.13.9
+        t:
+            "1":
+                - 1
+                - 2
+                - 3
+                - 5
+                - 11
+                - 49
+                - 53
+                - 71
+            "2":
+                - 1
+                - 2
+                - 3
+                - 5
+                - 11
+                - 49
+                - 53
+                - 71
+            "3":
+                - 7
+                - 13
+                - 38
+            "4": 3.13.9
+            "5": 0.25.1
+            "6": 4.57.2
+            "12": 0.25.1
+            "13": linux-x86_64
