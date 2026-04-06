@@ -19,15 +19,24 @@ def _init_tokenizer():
 
 def _tokenize_item(args):
     text, label = args
-    result = _tokenizer(text, padding="max_length", truncation=True, max_length=CONTEXT_SIZE, return_tensors="np")
-    return result["input_ids"][0].astype("int32"), label
+    try:
+        result = _tokenizer(text, padding="max_length", truncation=True, max_length=CONTEXT_SIZE, return_tensors="np")
+        return result["input_ids"][0].astype("int32"), label
+    except Exception:
+        return None, None
 
 def _iter_data(location_to_idx):
     """Yield (text, label) one line at a time — never loads full file into RAM."""
     with open(DATA_PATH, "r") as f:
         for line in f:
-            item = ast.literal_eval(line.strip())
-            yield item["text"], location_to_idx[item["location"]]
+            try:
+                item = ast.literal_eval(line.strip())
+                text = item.get("text")
+                if not isinstance(text, str) or not text.strip() or item["location"] is None or item["location"] not in location_to_idx:
+                    continue
+                yield text, location_to_idx[item["location"]]
+            except Exception:
+                continue
 
 def _chunked(iterable, size):
     chunk = []
@@ -68,8 +77,13 @@ if __name__ == "__main__":
     with ProcessPoolExecutor(max_workers=8, initializer=_init_tokenizer) as executor:
         for chunk in _chunked(_iter_data(location_to_idx), CHUNK_SIZE):
             chunk_start = time.time()
-            results = list(executor.map(_tokenize_item, chunk, chunksize=32))
+            try:
+                results = list(executor.map(_tokenize_item, chunk, chunksize=32))
+            except Exception:
+                results = []
             for input_ids, label in results:
+                if input_ids is None:
+                    continue
                 X_mmap[idx] = input_ids
                 y_mmap[idx] = label
                 idx += 1
