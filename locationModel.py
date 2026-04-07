@@ -133,9 +133,11 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=512, layers=6, units=1024, dropout_rate=0.2, denseLayers=3)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=378, layers=6, units=1024, dropout_rate=0.2, denseLayers=5)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
+
+            wandb.config.update({"model_size": model.count_params(), "train_size": train_size, "val_size": val_size})
 
             checkpoint_best = BestAccuracyCheckpoint(MODEL_PATH, unique_locations=unique_locations, save_freq_batches=2500)
 
