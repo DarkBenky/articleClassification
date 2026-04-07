@@ -3,5 +3,5 @@ def codeToName(code):
         for line in f:
             parts = line.strip().split(',')
             if parts[0] == code:
-                return parts[3]
+                return parts[2]
     return code

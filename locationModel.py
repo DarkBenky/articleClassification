@@ -63,7 +63,7 @@ class BestAccuracyCheckpoint(Callback):
                   step=self._batch_count)
 
 CONTEXT_SIZE = 512
-EPOCHS = 1
+EPOCHS = 10
 BATCH_SIZE = 32
 
 tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
@@ -133,7 +133,7 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=378, layers=6, units=1024, dropout_rate=0.2, denseLayers=3)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=512, layers=6, units=1024, dropout_rate=0.2, denseLayers=3)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
 
