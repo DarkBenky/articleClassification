@@ -4,33 +4,71 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Conv1D, GlobalMaxPooling1D, Embedding
-import ast
-import random
+import numpy as np
+import os
 import wandb
-from wandb.integration.keras import WandbMetricsLogger
+from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
+from tensorflow.keras.callbacks import ModelCheckpoint, Callback
 import json
+from CountryCodes import codeToName
+
+
+TEST_TEXTS = [
+    "Russia declares martial law in annexed Ukrainian territories, orders mass evacuation. this unprecedented move comes as tensions escalate in the region, with Moscow citing security concerns and the need to protect its interests. The martial law declaration allows for increased military presence and restrictions on civilian activities, signaling a significant escalation in the ongoing conflict between Russia and Ukraine.",
+    "The White House announced new executive orders today as Congress debates the federal budget. The President met with senior advisers at the Oval Office to discuss domestic economic policy and infrastructure spending.",
+    "Flooding in Bangladesh has displaced over a million people after record monsoon rains swept through the Ganges delta. Aid organizations are struggling to reach affected villages.",
+    "Tech giants in Silicon Valley reported record quarterly earnings as AI chip demand surges. Several San Francisco-based startups announced major funding rounds driven by artificial intelligence investments.",
+    "The European Central Bank raised interest rates for the third consecutive time amid persistent inflation across the eurozone. Markets in Frankfurt and Paris fell sharply in response.",
+    "Wildfires continue to burn across New South Wales and Victoria, forcing thousands of residents to evacuate. Australian authorities warn the fire season could be the worst in a decade.",
+    "Beijing announced sweeping new regulations targeting the domestic technology sector, requiring local data storage and government oversight of algorithms used by major platforms.",
+    "Israeli and Palestinian officials held indirect talks in Cairo brokered by Egyptian mediators, seeking a ceasefire agreement as violence continues in Gaza.",
+]
+
+
+class BestAccuracyCheckpoint(Callback):
+    """Saves the model whenever batch-level training accuracy improves, then logs test predictions to wandb."""
+    def __init__(self, filepath, unique_locations, save_freq_batches=500):
+        super().__init__()
+        self.filepath = filepath
+        self.unique_locations = unique_locations
+        self.location_keys = list(unique_locations.keys())
+        self.save_freq_batches = save_freq_batches
+        self.best_accuracy = -1.0
+        self._batch_count = 0
+
+    def on_train_batch_end(self, batch, logs=None):
+        self._batch_count += 1
+        if self._batch_count % self.save_freq_batches != 0:
+            return
+        acc = (logs or {}).get("accuracy", -1.0)
+        if acc > self.best_accuracy:
+            self.best_accuracy = acc
+            self.model.save(self.filepath)
+            print(f"\nBatch {batch+1}: new best accuracy {acc:.4f} — saved to {self.filepath}")
+            self._log_test_predictions(acc)
+
+    def _log_test_predictions(self, acc):
+        rows = []
+        for text in TEST_TEXTS:
+            inputs = tokenizer(text, truncation=True, padding="max_length",
+                               max_length=CONTEXT_SIZE, return_tensors="np")
+            preds = self.model.predict(inputs["input_ids"], verbose=0)
+            top_indices = np.argsort(preds[0])[-3:][::-1]
+            top_preds = " | ".join(
+                f"{codeToName(self.location_keys[i])} ({preds[0][i]:.3f})" for i in top_indices
+            )
+            rows.append([text[:100] + "...", top_preds])
+        table = wandb.Table(columns=["text", "top_3_predictions"], data=rows)
+        wandb.log({"test_predictions": table, "best_train_accuracy": acc},
+                  step=self._batch_count)
 
 CONTEXT_SIZE = 512
-EPOCHS = 10
+EPOCHS = 1
 BATCH_SIZE = 32
 
 tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
-def loadData(count=-1):
-    # load preprocessed data from txt file
-    data = []
-    with open("/media/user/2TB/preprocessed_data.txt", "r") as f:
-        lines = f.readlines()
-        for i, line in enumerate(lines):
-            if count != -1 and i >= count:
-                break
-            data.append(ast.literal_eval(line))
-            if i % 100 == 0:
-                print(f"Loaded {i}/{len(lines)} data points")
-    return data
-
-def tokenizeText(text):
-    return tokenizer(text, padding="max_length", truncation=True, max_length=CONTEXT_SIZE, return_tensors="tf")
+TOKENIZED_DIR = "/media/user/2TB/tokenizedtext"
 
 
 def buildModel(output_dim, vocab_size, embedding_dim=128, layers=2, units=128, dropout_rate=0.2, denseLayers=2):
@@ -49,65 +87,82 @@ def buildModel(output_dim, vocab_size, embedding_dim=128, layers=2, units=128, d
         model.add(Dropout(dropout_rate))
 
     model.add(Dense(output_dim, activation="softmax"))
-    model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    model.compile(optimizer=tf.keras.optimizers.Adam(clipnorm=1.0), loss="sparse_categorical_crossentropy", metrics=["accuracy"])
     return model
 
 if __name__ == "__main__":
-    # load all locations
+    MODEL_PATH = "location_model_best.keras"
+
     with open("unique_locations.json", "r") as f:
         unique_locations = json.load(f)
 
-    location_to_idx = {loc: idx for idx, loc in enumerate(unique_locations.keys())}
-    idx_to_location = {idx: loc for loc, idx in location_to_idx.items()}
+    if not os.path.exists(MODEL_PATH):
+        with open(os.path.join(TOKENIZED_DIR, "meta.json"), "r") as f:
+            meta = json.load(f)
 
-    data = loadData(1_000_000)  # load first 1 million data points for testing
+        valid_total = meta.get("valid_total", meta["total"])
+        print(f"Loading {valid_total} tokenized items from {TOKENIZED_DIR}")
 
-    wandb.init(project="article-classification", name="location-classification")
+        X_mmap = np.memmap(os.path.join(TOKENIZED_DIR, "X.dat"), dtype="int32", mode="r", shape=(valid_total, CONTEXT_SIZE))
+        y_mmap = np.memmap(os.path.join(TOKENIZED_DIR, "y.dat"), dtype="int64", mode="r", shape=(valid_total,))
 
-    print(f"Loaded {len(data)} data points")
+        val_size = int(valid_total * 0.1)
+        train_size = valid_total - val_size
 
-    # Build model once so weights persist across epochs
-    model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=378, layers=3, units=1024, dropout_rate=0.2, denseLayers=3)
-    model.build(input_shape=(None, CONTEXT_SIZE))
-    model.summary()
+        rng = np.random.default_rng(42)
+        all_indices = rng.permutation(valid_total).astype(np.int64)
+        val_indices   = all_indices[:val_size]
+        train_indices = all_indices[val_size:]
 
-    # Filter dataset once: drop None locations, subsample 'Unknown' to reduce noise
-    filtered_data = []
-    count = 0
-    l = len(data)
-    for item in data:
-        if item['location'] is None:
-            continue
-        if item['location'] == 'Unknown' and random.random() < 0.985:
-            continue
-        filtered_data.append(item)
-        count += 1
-        if count % 1000 == 0:
-            print(f"Processed {count}/{l} data points")
+        def fetch_batch(batch_idx):
+            x = tf.numpy_function(lambda b: X_mmap[b], [batch_idx], tf.int32)
+            y = tf.numpy_function(lambda b: y_mmap[b], [batch_idx], tf.int64)
+            x.set_shape([None, CONTEXT_SIZE])
+            y.set_shape([None])
+            return x, y
 
+        train_ds = (tf.data.Dataset.from_tensor_slices(train_indices)
+                    .shuffle(buffer_size=200_000, reshuffle_each_iteration=True)
+                    .batch(BATCH_SIZE)
+                    .map(fetch_batch, num_parallel_calls=tf.data.AUTOTUNE)
+                    .prefetch(tf.data.AUTOTUNE))
 
-    print(f"Filtered to {len(filtered_data)} data points")
+        val_ds = (tf.data.Dataset.from_tensor_slices(val_indices)
+                  .batch(BATCH_SIZE)
+                  .map(fetch_batch, num_parallel_calls=tf.data.AUTOTUNE)
+                  .prefetch(tf.data.AUTOTUNE))
 
-    X = []
-    y = []
-    count = 0
-    for item in filtered_data:
-        tokenizedText = tokenizeText(item["text"])
-        X.append(tokenizedText["input_ids"][0])
-        y.append(location_to_idx[item["location"]])
-        count += 1
-        if count % 1000 == 0:
-            print(f"Tokenized {count}/{len(filtered_data)} data points")
+        with wandb.init(project="article-classification") as run:
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=378, layers=6, units=1024, dropout_rate=0.2, denseLayers=3)
+            model.build(input_shape=(None, CONTEXT_SIZE))
+            model.summary()
 
-    del filtered_data  # free memory
-    del data  # free memory
+            checkpoint_best = BestAccuracyCheckpoint(MODEL_PATH, unique_locations=unique_locations, save_freq_batches=2500)
 
-    X = tf.convert_to_tensor(X)
-    y = tf.convert_to_tensor(y)
+            model.fit(train_ds, epochs=EPOCHS, validation_data=val_ds, callbacks=[
+                WandbMetricsLogger(log_freq="batch"),
+                checkpoint_best,
+            ])
 
-    model.fit(X, y, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_split=0.1, callbacks=[WandbMetricsLogger()])
+        model.save("location_classification_model.h5")
+    else:
+        print(f"Found existing model at {MODEL_PATH}, skipping training.")
 
-    wandb.finish()
+    print(f"\nLoading model from {MODEL_PATH} for inference...")
+    model = tf.keras.models.load_model(MODEL_PATH)
 
-    # save model
-    model.save("location_classification_model.h5")
+    test_texts = TEST_TEXTS
+
+    print("\nTop predicted locations:")
+    print("-" * 60)
+    for text in test_texts:
+        inputs = tokenizer(text, truncation=True, padding="max_length", max_length=CONTEXT_SIZE, return_tensors="np")
+        predictions = model.predict(inputs["input_ids"], verbose=0)
+        top_indices = np.argsort(predictions[0])[-5:][::-1]
+        print(f"TEXT: {text[:80]}...")
+        for idx in top_indices:
+            location = list(unique_locations.keys())[idx]
+            confidence = predictions[0][idx]
+            location_name = codeToName(location)
+            print(f"  {location_name}: {confidence:.4f}")
+        print()

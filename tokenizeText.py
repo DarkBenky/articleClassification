@@ -2,6 +2,7 @@ from locationModel import CONTEXT_SIZE
 import ast
 import json
 import os
+import random
 import time
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
@@ -25,14 +26,17 @@ def _tokenize_item(args):
     except Exception:
         return None, None
 
-def _iter_data(location_to_idx):
+def _iter_data(location_to_idx, lines_read_counter):
     """Yield (text, label) one line at a time — never loads full file into RAM."""
     with open(DATA_PATH, "r") as f:
         for line in f:
+            lines_read_counter[0] += 1
             try:
                 item = ast.literal_eval(line.strip())
                 text = item.get("text")
                 if not isinstance(text, str) or not text.strip() or item["location"] is None or item["location"] not in location_to_idx:
+                    continue
+                if item["location"] == "Unknown" and random.random() > 0.015:
                     continue
                 yield text, location_to_idx[item["location"]]
             except Exception:
@@ -67,15 +71,14 @@ if __name__ == "__main__":
     y_mmap = np.memmap(os.path.join(OUT_DIR, "y.dat"), dtype="int64",  mode="w+", shape=(total,))
 
     idx = 0
+    lines_read = [0]  # mutable counter shared with _iter_data
     start_time = time.time()
-    chunk_count = 0
-    total_chunks = (total + CHUNK_SIZE - 1) // CHUNK_SIZE
 
-    print(f"Starting tokenization with 8 workers | chunk size: {CHUNK_SIZE} | total chunks: {total_chunks}")
+    print(f"Starting tokenization with 16 workers | chunk size: {CHUNK_SIZE} | total lines: {total}")
     print("-" * 60)
 
-    with ProcessPoolExecutor(max_workers=8, initializer=_init_tokenizer) as executor:
-        for chunk in _chunked(_iter_data(location_to_idx), CHUNK_SIZE):
+    with ProcessPoolExecutor(max_workers=16, initializer=_init_tokenizer) as executor:
+        for chunk in _chunked(_iter_data(location_to_idx, lines_read), CHUNK_SIZE):
             chunk_start = time.time()
             try:
                 results = list(executor.map(_tokenize_item, chunk, chunksize=32))
@@ -89,28 +92,28 @@ if __name__ == "__main__":
                 idx += 1
             X_mmap.flush()
             y_mmap.flush()
-            chunk_count += 1
 
             elapsed = time.time() - start_time
             chunk_elapsed = time.time() - chunk_start
-            pct = idx / total * 100
-            rate = idx / elapsed if elapsed > 0 else 0
-            eta = (total - idx) / rate if rate > 0 else 0
+            lines_pct = lines_read[0] / total * 100
+            rate = lines_read[0] / elapsed if elapsed > 0 else 0
+            eta = (total - lines_read[0]) / rate if rate > 0 else 0
             print(
-                f"[{chunk_count}/{total_chunks}] {idx}/{total} ({pct:.1f}%) | "
+                f"[{lines_read[0]}/{total} lines ({lines_pct:.1f}%)] written: {idx} | "
                 f"chunk: {chunk_elapsed:.1f}s | elapsed: {elapsed:.1f}s | "
-                f"rate: {rate:.0f} items/s | ETA: {eta:.0f}s"
+                f"rate: {rate:.0f} lines/s | ETA: {eta:.0f}s"
             )
 
     total_time = time.time() - start_time
     print("-" * 60)
-    print(f"Finished {total} items in {total_time:.1f}s ({total/total_time:.0f} items/s)")
+    print(f"Finished. Read {total} lines, wrote {idx} valid items in {total_time:.1f}s ({total/total_time:.0f} lines/s)")
+    print(f"Kept {idx/total*100:.1f}% of all lines ({idx} items)")
 
     # Save shape metadata so the arrays can be reloaded later:
     #   X = np.memmap('X.dat', dtype='int32', mode='r', shape=(total, CONTEXT_SIZE))
     #   y = np.memmap('y.dat', dtype='int64', mode='r', shape=(total,))
     with open(os.path.join(OUT_DIR, "meta.json"), "w") as f:
-        json.dump({"total": total, "context_size": CONTEXT_SIZE}, f)
+        json.dump({"total": total, "valid_total": idx, "context_size": CONTEXT_SIZE}, f)
 
     print(f"Done. Saved to {OUT_DIR}")
     
