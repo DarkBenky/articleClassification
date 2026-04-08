@@ -141,7 +141,7 @@ if __name__ == "__main__":
                                     {"role": "system", "content": "You are a professional news writer."},
                                     {"role": "user", "content": prompt},
                                 ],
-                                options={"temperature": 1.15, "top_p": 0.95, "top_k": 64},
+                                options={"temperature": 1.25, "top_p": 0.95, "top_k": 64},
                             )
                             article_text = response.message.content.strip()
                             addToDataset({
