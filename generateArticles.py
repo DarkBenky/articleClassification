@@ -128,7 +128,7 @@ if __name__ == "__main__":
     errors  = 0
     start_time = time.time()
 
-    for fips_code, location in flipCodeToName.items():
+    for fips_code, location in flipCodeToName.items().__reversed__():
         for subject in SUBJECTS:
             for type_ in TYPES:
                 for style in STYLES:
@@ -141,7 +141,7 @@ if __name__ == "__main__":
                                     {"role": "system", "content": "You are a professional news writer."},
                                     {"role": "user", "content": prompt},
                                 ],
-                                options={"temperature": 1.0, "top_p": 0.95, "top_k": 64},
+                                options={"temperature": 1.15, "top_p": 0.95, "top_k": 64},
                             )
                             article_text = response.message.content.strip()
                             addToDataset({
