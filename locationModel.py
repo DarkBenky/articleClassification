@@ -93,7 +93,7 @@ def buildModel(output_dim, vocab_size, embedding_dim=128, layers=2, units=128, d
 if __name__ == "__main__":
     MODEL_PATH = "location_model_best.keras"
 
-    with open("unique_locations.json", "r") as f:
+    with open("unique_fips_locations.json", "r") as f:
         unique_locations = json.load(f)
 
     if not os.path.exists(MODEL_PATH):
@@ -163,7 +163,7 @@ if __name__ == "__main__":
         top_indices = np.argsort(predictions[0])[-5:][::-1]
         print(f"TEXT: {text[:80]}...")
         for idx in top_indices:
-            location = list(unique_locations.keys())[idx]
+            location = list(unique_locations.keys())[idx]  # already a FIPS code
             confidence = predictions[0][idx]
             location_name = codeToName(location)
             print(f"  {location_name}: {confidence:.4f}")

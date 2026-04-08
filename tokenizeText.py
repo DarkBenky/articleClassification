@@ -26,7 +26,7 @@ def _tokenize_item(args):
     except Exception:
         return None, None
 
-def _iter_data(location_to_idx, lines_read_counter):
+def _iter_data(location_to_fips, fips_to_idx, lines_read_counter):
     """Yield (text, label) one line at a time — never loads full file into RAM."""
     with open(DATA_PATH, "r") as f:
         for line in f:
@@ -34,11 +34,14 @@ def _iter_data(location_to_idx, lines_read_counter):
             try:
                 item = ast.literal_eval(line.strip())
                 text = item.get("text")
-                if not isinstance(text, str) or not text.strip() or item["location"] is None or item["location"] not in location_to_idx:
+                if not isinstance(text, str) or not text.strip() or item["location"] is None or item["location"] not in location_to_fips:
                     continue
-                if item["location"] == "Unknown" and random.random() > 0.015:
+                fips = location_to_fips[item["location"]]
+                if fips not in fips_to_idx:
                     continue
-                yield text, location_to_idx[item["location"]]
+                if fips == "Unknown" and random.random() > 0.005:  # Keep only ~0.5% of Unknown to avoid dominating training
+                    continue
+                yield text, fips_to_idx[fips]
             except Exception:
                 continue
 
@@ -53,10 +56,21 @@ def _chunked(iterable, size):
         yield chunk
 
 if __name__ == "__main__":
-    with open("unique_locations.json", "r") as f:
-        unique_locations = json.load(f)
+    with open("location_to_fips.json", "r") as f:
+        location_to_fips = json.load(f)
 
-    location_to_idx = {loc: idx for idx, loc in enumerate(unique_locations.keys())}
+    with open("unique_fips_locations.json", "r") as f:
+        fips_locations = json.load(f)
+
+    # Index is determined by position in the reduced FIPS label set
+    fips_to_idx = {fips: idx for idx, fips in enumerate(fips_locations.keys())}
+
+    # Compose: original location string → FIPS code → integer label
+    location_to_idx = {
+        loc: fips_to_idx[fips]
+        for loc, fips in location_to_fips.items()
+        if fips in fips_to_idx
+    }
 
     # Single pass to count lines (cheap — no parsing)
     print("Counting total items...")
@@ -78,7 +92,7 @@ if __name__ == "__main__":
     print("-" * 60)
 
     with ProcessPoolExecutor(max_workers=16, initializer=_init_tokenizer) as executor:
-        for chunk in _chunked(_iter_data(location_to_idx, lines_read), CHUNK_SIZE):
+        for chunk in _chunked(_iter_data(location_to_fips, fips_to_idx, lines_read), CHUNK_SIZE):
             chunk_start = time.time()
             try:
                 results = list(executor.map(_tokenize_item, chunk, chunksize=32))
