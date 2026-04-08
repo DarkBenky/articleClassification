@@ -1,10 +1,14 @@
 from locationModel import CONTEXT_SIZE
+from groupLocations import flipCodeToName
 import ast
 import json
 import os
 import random
 import time
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor
 from transformers import AutoTokenizer
 
@@ -88,10 +92,10 @@ if __name__ == "__main__":
     lines_read = [0]  # mutable counter shared with _iter_data
     start_time = time.time()
 
-    print(f"Starting tokenization with 16 workers | chunk size: {CHUNK_SIZE} | total lines: {total}")
+    print(f"Starting tokenization with 24 workers | chunk size: {CHUNK_SIZE} | total lines: {total}")
     print("-" * 60)
 
-    with ProcessPoolExecutor(max_workers=16, initializer=_init_tokenizer) as executor:
+    with ProcessPoolExecutor(max_workers=24, initializer=_init_tokenizer) as executor:
         for chunk in _chunked(_iter_data(location_to_fips, fips_to_idx, lines_read), CHUNK_SIZE):
             chunk_start = time.time()
             try:
@@ -129,5 +133,32 @@ if __name__ == "__main__":
     with open(os.path.join(OUT_DIR, "meta.json"), "w") as f:
         json.dump({"total": total, "valid_total": idx, "context_size": CONTEXT_SIZE}, f)
 
+    label_counts = np.bincount(y_mmap[:idx].astype(np.int64), minlength=len(fips_to_idx))
+    idx_to_fips  = {v: k for k, v in fips_to_idx.items()}
+
+    top_n   = 30
+    order   = np.argsort(label_counts)[::-1][:top_n]
+    top_codes  = [idx_to_fips[i] for i in order]
+    top_counts = [int(label_counts[i]) for i in order]
+
+    print("\nTop categories in tokenized dataset:")
+    print(f"  {'FIPS':<6} {'Count':>10}  Name")
+    print("  " + "-" * 40)
+    for code, count in zip(top_codes, top_counts):
+        name = flipCodeToName.get(code, code)
+        pct  = count / idx * 100 if idx else 0
+        print(f"  {code:<6} {count:>10,}  {name} ({pct:.1f}%)")
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    bars = ax.barh(top_codes[::-1], top_counts[::-1], color="steelblue")
+    ax.bar_label(bars, labels=[f"{c:,}" for c in top_counts[::-1]], padding=4, fontsize=8)
+    ax.set_xlabel("Sample count")
+    ax.set_title(f"Top {top_n} locations in tokenized dataset ({idx:,} total samples)")
+    ax.margins(x=0.12)
+    plt.tight_layout()
+    chart_path = "top_locations.png"
+    fig.savefig(chart_path, dpi=150)
+    plt.close(fig)
+    print(f"\nChart saved to {chart_path}")
+
     print(f"Done. Saved to {OUT_DIR}")
-    
