@@ -2,11 +2,12 @@ from addArticles import addToDataset
 import ollama
 import csv
 import time
+import random
 
 # MODEL = "gemma4:e4b"
-# MODEL = "gemma4:e2b" // fast
+MODEL = "gemma4:e2b" # fast
 # MODEL = "qwen3.5:2b" # peaty slow
-MODEL = "smollm2:360m"
+# MODEL = "smollm2:360m" # really fast, but lower quality
 
 def getCountries():
     flipCodeToName = {}
@@ -121,55 +122,46 @@ if __name__ == "__main__":
     ]
 
 
-    totalCount = len(flipCodeToName) * len(SUBJECTS) * len(TYPES) * len(STYLES) * 3
-    print(f"Total articles to generate: {totalCount:,}")
+    fips_items = list(flipCodeToName.items())
+    print("Running infinite loop — press Ctrl+C to stop.")
     print("-" * 60)
     counter = 0
     errors  = 0
     start_time = time.time()
 
-    for fips_code, location in flipCodeToName.items().__reversed__():
-        for subject in SUBJECTS:
-            for type_ in TYPES:
-                for style in STYLES:
-                    for _ in range(3):  # generate 3 articles per combination
-                        prompt = createPrompt(subject, type_, style, location)
-                        try:
-                            response = ollama.chat(
-                                model=MODEL,
-                                messages=[
-                                    {"role": "system", "content": "You are a professional news writer."},
-                                    {"role": "user", "content": prompt},
-                                ],
-                                options={"temperature": 1.25, "top_p": 0.95, "top_k": 64},
-                            )
-                            article_text = response.message.content.strip()
-                            addToDataset({
-                                "text": article_text,
-                                "location": fips_code,
-                                "category": subject,
-                            })
-                        except Exception as e:
-                            errors += 1
-                            print(f"  [ERROR] {location} ({fips_code}): {e}")
-                        counter += 1
-                        if counter % 10 == 0:
-                            elapsed  = time.time() - start_time
-                            apm      = counter / elapsed * 60 if elapsed > 0 else 0
-                            eta_s    = (totalCount - counter) / (counter / elapsed) if counter > 0 else 0
-                            eta_h    = int(eta_s // 3600)
-                            eta_m    = int((eta_s % 3600) // 60)
-                            pct      = counter / totalCount * 100
-                            print(
-                                f"[{counter:>7,}/{totalCount:,} ({pct:.1f}%)] "
-                                f"{apm:.1f} art/min | "
-                                f"ETA: {eta_h}h {eta_m:02d}m | "
-                                f"errors: {errors}"
-                            )
-
-    total_time = time.time() - start_time
-    print("-" * 60)
-    print(f"Done. {counter:,} attempts | {counter - errors:,} saved | {errors} errors | {total_time/60:.1f} min total")
+    while True:
+        fips_code, location = random.choice(fips_items)
+        subject = random.choice(SUBJECTS)
+        type_   = random.choice(TYPES)
+        style   = random.choice(STYLES)
+        prompt  = createPrompt(subject, type_, style, location)
+        try:
+            response = ollama.chat(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a professional news writer."},
+                    {"role": "user", "content": prompt},
+                ],
+                options={"temperature": 1.25, "top_p": 0.95, "top_k": 64},
+            )
+            article_text = response.message.content.strip()
+            addToDataset({
+                "text": article_text,
+                "location": fips_code,
+                "category": subject,
+            })
+        except Exception as e:
+            errors += 1
+            print(f"  [ERROR] {location} ({fips_code}): {e}")
+        counter += 1
+        if counter % 10 == 0:
+            elapsed = time.time() - start_time
+            apm     = counter / elapsed * 60 if elapsed > 0 else 0
+            print(
+                f"[{counter:,} generated] "
+                f"{apm:.1f} art/min | "
+                f"errors: {errors}"
+            )
     
 
 
