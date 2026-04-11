@@ -88,6 +88,48 @@ if __name__ == "__main__":
         "WATER RESOURCES",
         "INFRASTRUCTURE",
         "SOCIAL MEDIA",
+        # Geopolitics / Diplomacy
+        "PROXY WAR",
+        "ALLIANCE",
+        "TERRITORIAL DISPUTE",
+        "ESPIONAGE",
+        "FOREIGN POLICY",
+        "COUP",
+        "REGIME CHANGE",
+        # Economics / Finance
+        "DEBT CRISIS",
+        "RECESSION",
+        "TRADE WAR",
+        "FISCAL POLICY",
+        "MONETARY POLICY",
+        "FOREIGN INVESTMENT",
+        "STOCK MARKET",
+        "PRIVATIZATION",
+        "ECONOMIC SANCTIONS",
+        # Military
+        "ARMS RACE",
+        "MILITARY AID",
+        "WAR CRIMES",
+        "NAVAL CONFLICT",
+        "AIR STRIKES",
+        "INSURGENCY",
+        "PEACEKEEPING",
+        "DRONE WARFARE",
+        "INTELLIGENCE",
+        # Statistics / Data-driven
+        "DEMOGRAPHICS",
+        "POPULATION",
+        "ECONOMIC DATA",
+        "CRIME STATISTICS",
+        "MIGRATION TRENDS",
+        # Other
+        "FAMINE",
+        "PANDEMIC",
+        "SEPARATISM",
+        "CIVIL WAR",
+        "ORGANIZED CRIME",
+        "MONEY LAUNDERING",
+        "POLITICAL PRISONERS",
     ]
 
     TYPES = [

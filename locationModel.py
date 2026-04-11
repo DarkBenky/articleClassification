@@ -25,29 +25,33 @@ TEST_TEXTS = [
 ]
 
 
-class BestAccuracyCheckpoint(Callback):
-    """Saves the model whenever batch-level training accuracy improves, then logs test predictions to wandb."""
-    def __init__(self, filepath, unique_locations, save_freq_batches=500):
+class BestValCheckpoint(Callback):
+    """Evaluates on val data every N batches, saves on best val_loss, logs test predictions to wandb."""
+    def __init__(self, filepath, unique_locations, val_ds, save_freq_batches=2500, val_steps=100):
         super().__init__()
         self.filepath = filepath
         self.unique_locations = unique_locations
         self.location_keys = list(unique_locations.keys())
         self.save_freq_batches = save_freq_batches
-        self.best_accuracy = -1.0
+        self.val_ds = val_ds
+        self.val_steps = val_steps
+        self.best_val_loss = float("inf")
         self._batch_count = 0
 
     def on_train_batch_end(self, batch, logs=None):
         self._batch_count += 1
         if self._batch_count % self.save_freq_batches != 0:
             return
-        acc = (logs or {}).get("accuracy", -1.0)
-        if acc > self.best_accuracy:
-            self.best_accuracy = acc
+        val_loss, val_acc = self.model.evaluate(self.val_ds.take(self.val_steps), verbose=0)
+        wandb.log({"batch_val_loss": val_loss, "batch_val_accuracy": val_acc})
+        print(f"\nBatch {self._batch_count}: val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
+        if val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
             self.model.save(self.filepath)
-            print(f"\nBatch {batch+1}: new best accuracy {acc:.4f} — saved to {self.filepath}")
-            self._log_test_predictions(acc)
+            print(f"  -> new best val_loss — saved to {self.filepath}")
+            self._log_test_predictions(val_loss, val_acc)
 
-    def _log_test_predictions(self, acc):
+    def _log_test_predictions(self, val_loss, val_acc):
         rows = []
         for text in TEST_TEXTS:
             inputs = tokenizer(text, truncation=True, padding="max_length",
@@ -59,7 +63,7 @@ class BestAccuracyCheckpoint(Callback):
             )
             rows.append([text[:100] + "...", top_preds])
         table = wandb.Table(columns=["text", "top_3_predictions"], data=rows)
-        wandb.log({"test_predictions": table, "best_train_accuracy": acc})
+        wandb.log({"test_predictions": table, "best_val_loss": val_loss, "best_val_accuracy": val_acc})
 
 CONTEXT_SIZE = 512
 EPOCHS = 10
@@ -132,13 +136,13 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=378, layers=3, units=2048, dropout_rate=0.2, denseLayers=1)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, layers=2, units=512, dropout_rate=0.3, denseLayers=1)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
 
             wandb.config.update({"model_size": model.count_params(), "train_size": train_size, "val_size": val_size})
 
-            checkpoint_best = BestAccuracyCheckpoint(MODEL_PATH, unique_locations=unique_locations, save_freq_batches=2500)
+            checkpoint_best = BestValCheckpoint(MODEL_PATH, unique_locations=unique_locations, val_ds=val_ds, save_freq_batches=2048, val_steps=8)
 
             model.fit(train_ds, epochs=EPOCHS, validation_data=val_ds, callbacks=[
                 WandbMetricsLogger(log_freq="batch"),
