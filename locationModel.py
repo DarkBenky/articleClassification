@@ -59,8 +59,7 @@ class BestAccuracyCheckpoint(Callback):
             )
             rows.append([text[:100] + "...", top_preds])
         table = wandb.Table(columns=["text", "top_3_predictions"], data=rows)
-        wandb.log({"test_predictions": table, "best_train_accuracy": acc},
-                  step=self._batch_count)
+        wandb.log({"test_predictions": table, "best_train_accuracy": acc})
 
 CONTEXT_SIZE = 512
 EPOCHS = 10
