@@ -3,9 +3,18 @@ import ollama
 import csv
 import time
 import random
+import os
+
+
+USE_CLOUD = True
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+CLOUD_MODEL = "openrouter/elephant-alpha"
+# CLOUD_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"
+CLOUD_DELAY = 0.0          # seconds between cloud requests (respect rate limits)
+CLOUD_MAX_RETRIES = 6      # max retries on 429 before giving up on that article
 
 # MODEL = "gemma4:e4b"
-MODEL = "gemma4:e2b" # fast
+MODEL = "gemma4:e2b" # fast (local ollama)
 # MODEL = "qwen3.5:2b" # peaty slow
 # MODEL = "smollm2:360m" # really fast, but lower quality
 
@@ -165,6 +174,19 @@ if __name__ == "__main__":
 
 
     fips_items = list(flipCodeToName.items())
+
+    if USE_CLOUD:
+        if not OPENROUTER_API_KEY:
+            raise ValueError("OPENROUTER_API_KEY environment variable is not set.")
+        from openai import OpenAI
+        cloud_client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENROUTER_API_KEY,
+        )
+        print(f"Using cloud model: {CLOUD_MODEL} (OpenRouter)")
+    else:
+        print(f"Using local model: {MODEL} (ollama)")
+
     print("Running infinite loop — press Ctrl+C to stop.")
     print("-" * 60)
     counter = 0
@@ -178,15 +200,39 @@ if __name__ == "__main__":
         style   = random.choice(STYLES)
         prompt  = createPrompt(subject, type_, style, location)
         try:
-            response = ollama.chat(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a professional news writer."},
-                    {"role": "user", "content": prompt},
-                ],
-                options={"temperature": 1.25, "top_p": 0.95, "top_k": 64},
-            )
-            article_text = response.message.content.strip()
+            if USE_CLOUD:
+                wait = CLOUD_DELAY
+                for attempt in range(1, CLOUD_MAX_RETRIES + 1):
+                    try:
+                        resp = cloud_client.chat.completions.create(
+                            model=CLOUD_MODEL,
+                            messages=[
+                                {"role": "system", "content": "You are a professional news writer."},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=1.25,
+                            top_p=0.95,
+                        )
+                        article_text = resp.choices[0].message.content.strip()
+                        time.sleep(CLOUD_DELAY)
+                        break
+                    except Exception as api_err:
+                        if "429" in str(api_err) and attempt < CLOUD_MAX_RETRIES:
+                            print(f"  [429] rate limited — retrying in {wait:.0f}s (attempt {attempt}/{CLOUD_MAX_RETRIES})")
+                            time.sleep(wait)
+                            wait = min(wait * 2, 60)
+                        else:
+                            raise
+            else:
+                response = ollama.chat(
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": "You are a professional news writer."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    options={"temperature": 1.25, "top_p": 0.95, "top_k": 64},
+                )
+                article_text = response.message.content.strip()
             addToDataset({
                 "text": article_text,
                 "location": fips_code,
