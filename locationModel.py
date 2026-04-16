@@ -109,7 +109,7 @@ if __name__ == "__main__":
         X_mmap = np.memmap(os.path.join(TOKENIZED_DIR, "X.dat"), dtype="int32", mode="r", shape=(valid_total, CONTEXT_SIZE))
         y_mmap = np.memmap(os.path.join(TOKENIZED_DIR, "y.dat"), dtype="int64", mode="r", shape=(valid_total,))
 
-        val_size = int(valid_total * 0.1)
+        val_size = int(valid_total * 0.03)
         train_size = valid_total - val_size
 
         rng = np.random.default_rng(42)
