@@ -13,6 +13,9 @@ load_dotenv()
 USE_CLOUD = True
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
+ELEPHANT_MODEL   = "openrouter/elephant-alpha"
+ELEPHANT_MAX_FAILS = 3   # after this many failures, stop trying elephant for this run
+
 CLOUD_WORKERS = [
     {"model": "mistralai/mistral-small-3.2-24b-instruct", "provider": "deepinfra/fp8"},
     {"model": "qwen/qwen3.5-flash-02-23",                "provider": "alibaba"},
@@ -21,7 +24,7 @@ CLOUD_WORKERS = [
     {"model": "mistralai/mistral-nemo",                  "provider": "deepinfra/fp8"},
     {"model": "qwen/qwen3.5-9b",                         "provider": "venice/fp8"},
     {"model": "stepfun/step-3.5-flash",                  "provider": "deepinfra/fp8"},
-    {"model": "openai/gpt-oss-20b",                  "provider": "amazon-bedrock"},
+    {"model": "openai/gpt-oss-20b",                      "provider": "amazon-bedrock"},
 ]
 
 CLOUD_DELAY = 0.0
@@ -43,14 +46,27 @@ def getCountries():
             NameToFlipCode[name] = code
     return flipCodeToName, NameToFlipCode
 
-def createPrompt(subject, type_, style, location):
+def createPrompt(subject, type_, style, location, date):
+    use_indirect = random.random() < 0.35
+    if use_indirect:
+        location_instruction = (
+            f"set in {location}, but do NOT explicitly name the country or region. "
+            f"Instead, convey the location only through indirect cues: "
+            f"use the capital city, well-known landmarks, local institutions, "
+            f"currency, prominent politicians, or colloquial names that strongly imply {location}. "
+            f"A reader familiar with the region should recognise it, but the country name must not appear."
+        )
+    else:
+        location_instruction = (
+            f"set specifically in {location}. "
+            f"Ground every detail firmly in {location} — do not make it generic or global."
+        )
     return (
         f"Write a {style.lower()}, {type_.lower()} news article about {subject.lower()} "
-        f"set specifically in {location}. "
-        f"The article must read like a real published piece: include a headline, "
+        f"{location_instruction} "
+        f"The article must read like a real published piece from {date}: include a headline, "
         f"dateline with the city/country, named local officials or organisations, "
         # f"specific local place names, and at least one direct quote. "
-        f"Ground every detail firmly in {location} — do not make it generic or global. "
         f"Length: 200-400 words. Output only the article text, no commentary. "
         f"Avoid using any emojis or special characters. The article should be in English."
     )
@@ -199,6 +215,23 @@ if __name__ == "__main__":
 
     lock  = threading.Lock()
     stats = {"counter": 0, "errors": 0, "start_time": time.time()}
+    elephant_lock  = threading.Lock()   # only one worker tries elephant at a time
+    elephant_state = {"fails": 0, "active": True}  # shared across all workers
+
+    def call_cloud(model, provider, messages, temperature=0.7, top_p=0.8):
+        """Single API call; returns content string or raises."""
+        extra = {"enable_thinking": False, "top_k": 20}
+        if provider:
+            extra["provider"] = {"order": [provider], "allow_fallbacks": False}
+        resp = cloud_client.chat.completions.create(
+            model=model,
+            extra_body=extra,
+            messages=messages,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=1.5,
+        )
+        return resp.choices[0].message.content.strip()
 
     def run_worker(worker_cfg):
         model    = worker_cfg["model"] if USE_CLOUD else MODEL
@@ -208,43 +241,57 @@ if __name__ == "__main__":
             subject = random.choice(SUBJECTS)
             type_   = random.choice(TYPES)
             style   = random.choice(STYLES)
-            prompt  = createPrompt(subject, type_, style, location)
+            year    = random.randint(2000, 2035)
+            month   = random.randint(1, 12)
+            day     = random.randint(1, 28)
+            date_str = f"{day}. {time.strftime('%B', time.strptime(str(month), '%m'))} {year}"
+            prompt  = createPrompt(subject, type_, style, location, date_str)
             article_text = None
             try:
                 if USE_CLOUD:
-                    wait = 5
-                    for attempt in range(1, CLOUD_MAX_RETRIES + 1):
+                    messages = [
+                        {"role": "system", "content": "You are a professional news writer. Never use emojis, emoticons, bullet points, hashtags, or special decorative characters in your output."},
+                        {"role": "user", "content": prompt},
+                    ]
+
+                    if elephant_state["active"] and elephant_lock.acquire(blocking=False):
                         try:
-                            resp = cloud_client.chat.completions.create(
-                                model=model,
-                                extra_body={
-                                    "provider": {"order": [provider], "allow_fallbacks": False},
-                                    "enable_thinking": False,
-                                    "top_k": 20,
-                                },
-                                messages=[
-                                    {"role": "system", "content": "You are a professional news writer. Never use emojis, emoticons, bullet points, hashtags, or special decorative characters in your output."},
-                                    {"role": "user", "content": prompt},
-                                ],
-                                temperature=0.7,
-                                top_p=0.8,
-                                presence_penalty=1.5,
-                            )
-                            article_text = resp.choices[0].message.content.strip()
-                            if CLOUD_DELAY > 0:
-                                time.sleep(CLOUD_DELAY)
-                            break
-                        except Exception as api_err:
-                            err_str = str(api_err)
-                            if "per-day" in err_str or "per_day" in err_str:
-                                print(f"\n[{model}] DAILY LIMIT HIT. Stopping this worker.")
-                                return
-                            if "429" in err_str and attempt < CLOUD_MAX_RETRIES:
-                                print(f"  [{model}] 429 — retrying in {wait}s (attempt {attempt}/{CLOUD_MAX_RETRIES})")
-                                time.sleep(wait)
-                                wait = min(wait * 2, 120)
+                            article_text = call_cloud(ELEPHANT_MODEL, None, messages)
+                        except Exception as e_err:
+                            err_str = str(e_err)
+                            if "429" in err_str:
+                                pass
                             else:
-                                raise
+                                with lock:
+                                    elephant_state["fails"] += 1
+                                    fails = elephant_state["fails"]
+                                    if fails >= ELEPHANT_MAX_FAILS:
+                                        elephant_state["active"] = False
+                                        print(f"\n[elephant-alpha] {fails} real failures — switching all workers to fallback models.")
+                                    else:
+                                        print(f"\n[elephant-alpha] fail {fails}/{ELEPHANT_MAX_FAILS}: {e_err}")
+                        finally:
+                            elephant_lock.release()
+
+                    if article_text is None:
+                        wait = 5
+                        for attempt in range(1, CLOUD_MAX_RETRIES + 1):
+                            try:
+                                article_text = call_cloud(model, provider, messages)
+                                if CLOUD_DELAY > 0:
+                                    time.sleep(CLOUD_DELAY)
+                                break
+                            except Exception as api_err:
+                                err_str = str(api_err)
+                                if "per-day" in err_str or "per_day" in err_str:
+                                    print(f"\n[{model}] DAILY LIMIT HIT. Stopping this worker.")
+                                    return
+                                if "429" in err_str and attempt < CLOUD_MAX_RETRIES:
+                                    print(f"  [{model}] 429 — retrying in {wait}s (attempt {attempt}/{CLOUD_MAX_RETRIES})")
+                                    time.sleep(wait)
+                                    wait = min(wait * 2, 120)
+                                else:
+                                    raise
                 else:
                     response = ollama.chat(
                         model=MODEL,

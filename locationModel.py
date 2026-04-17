@@ -1,6 +1,3 @@
-add weight to loss based on the count of each category
-add diffrent kernel size like 3 5 7 5 3 to improve preformance even more
-
 from transformers import AutoTokenizer
 import tensorflow as tf
 from tensorflow import keras
@@ -25,12 +22,14 @@ TEST_TEXTS = [
     "Wildfires continue to burn across New South Wales and Victoria, forcing thousands of residents to evacuate. Australian authorities warn the fire season could be the worst in a decade.",
     "Beijing announced sweeping new regulations targeting the domestic technology sector, requiring local data storage and government oversight of algorithms used by major platforms.",
     "Israeli and Palestinian officials held indirect talks in Cairo brokered by Egyptian mediators, seeking a ceasefire agreement as violence continues in Gaza.",
+    "Japan's parliament approved a new defense budget doubling military spending over the next five years, citing regional security threats and the need to modernize its Self-Defense Forces.",
+    "The United Nations released a report warning that global food insecurity is worsening due to climate change, conflict, and economic instability, with millions at risk of hunger worldwide.",
 ]
 
 
 class BestValCheckpoint(Callback):
     """Evaluates on val data every N batches, saves on best val_loss, logs test predictions to wandb."""
-    def __init__(self, filepath, unique_locations, val_ds, save_freq_batches=2500, val_steps=100):
+    def __init__(self, filepath, unique_locations, val_ds, save_freq_batches=2500, val_steps=100, warmup_batches=5000):
         super().__init__()
         self.filepath = filepath
         self.unique_locations = unique_locations
@@ -38,8 +37,16 @@ class BestValCheckpoint(Callback):
         self.save_freq_batches = save_freq_batches
         self.val_ds = val_ds
         self.val_steps = val_steps
+        self.warmup_batches = warmup_batches
         self.best_val_loss = float("inf")
         self._batch_count = 0
+
+    def _check_and_save(self, val_loss, val_acc, label):
+        if val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
+            self.model.save(self.filepath)
+            print(f"  -> new best val_loss ({label}) — saved to {self.filepath}")
+            self._log_test_predictions(val_loss, val_acc)
 
     def on_train_batch_end(self, batch, logs=None):
         self._batch_count += 1
@@ -48,11 +55,17 @@ class BestValCheckpoint(Callback):
         val_loss, val_acc = self.model.evaluate(self.val_ds.take(self.val_steps), verbose=0)
         wandb.log({"batch_val_loss": val_loss, "batch_val_accuracy": val_acc})
         print(f"\nBatch {self._batch_count}: val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
-        if val_loss < self.best_val_loss:
-            self.best_val_loss = val_loss
-            self.model.save(self.filepath)
-            print(f"  -> new best val_loss — saved to {self.filepath}")
-            self._log_test_predictions(val_loss, val_acc)
+        if self._batch_count < self.warmup_batches:
+            print(f"  -> warmup ({self._batch_count}/{self.warmup_batches} batches), skipping save")
+            return
+        self._check_and_save(val_loss, val_acc, f"batch {self._batch_count}")
+
+    def on_epoch_end(self, epoch, logs=None):
+        # evaluate on the full val set at end of each epoch — more reliable than batch samples
+        val_loss, val_acc = self.model.evaluate(self.val_ds, verbose=0)
+        wandb.log({"epoch_full_val_loss": val_loss, "epoch_full_val_accuracy": val_acc, "epoch": epoch})
+        print(f"\nEpoch {epoch + 1} full val: val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
+        self._check_and_save(val_loss, val_acc, f"epoch {epoch + 1}")
 
     def _log_test_predictions(self, val_loss, val_acc):
         rows = []
@@ -77,22 +90,26 @@ tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v
 TOKENIZED_DIR = "/media/user/2TB/tokenizedtext"
 
 
-def buildModel(output_dim, vocab_size, embedding_dim=128, layers=2, units=128, dropout_rate=0.2, denseLayers=2):
-    # simple embedding + conv1d + global max pooling + dense model
-    model = Sequential()
-    model.add(Embedding(input_dim=vocab_size, output_dim=embedding_dim, input_length=CONTEXT_SIZE))
+def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.2, denseLayers=2):
+    inputs = keras.Input(shape=(CONTEXT_SIZE,))
+    x = layers.Embedding(input_dim=vocab_size, output_dim=embedding_dim)(inputs)
 
-    for i in range(layers):
-        model.add(Conv1D(units, 5, activation="relu"))
-        if i == layers - 1:
-            model.add(GlobalMaxPooling1D())
-        model.add(Dropout(dropout_rate))
-    
+    branches = []
+    for ks in kernel_sizes:
+        branch = layers.Conv1D(conv_units, ks, activation="relu", padding="same")(x)
+        branch = layers.GlobalMaxPooling1D()(branch)
+        branches.append(branch)
+
+    x = layers.Concatenate()(branches) if len(branches) > 1 else branches[0]
+    x = layers.Dropout(dropout_rate)(x)
+
     for _ in range(denseLayers):
-        model.add(Dense(units, activation="relu"))
-        model.add(Dropout(dropout_rate))
+        x = layers.Dense(units, activation="relu")(x)
+        x = layers.Dropout(dropout_rate)(x)
 
-    model.add(Dense(output_dim, activation="softmax"))
+    outputs = layers.Dense(output_dim, activation="softmax")(x)
+
+    model = keras.Model(inputs, outputs)
     model.compile(optimizer=tf.keras.optimizers.Adam(clipnorm=1.0), loss="sparse_categorical_crossentropy", metrics=["accuracy"])
     return model
 
@@ -139,13 +156,13 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, layers=2, units=512, dropout_rate=0.3, denseLayers=1)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.3, denseLayers=1)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
 
             wandb.config.update({"model_size": model.count_params(), "train_size": train_size, "val_size": val_size})
 
-            checkpoint_best = BestValCheckpoint(MODEL_PATH, unique_locations=unique_locations, val_ds=val_ds, save_freq_batches=2048, val_steps=8)
+            checkpoint_best = BestValCheckpoint(MODEL_PATH, unique_locations=unique_locations, val_ds=val_ds, save_freq_batches=2048, val_steps=16, warmup_batches=4096)
 
             model.fit(train_ds, epochs=EPOCHS, validation_data=val_ds, callbacks=[
                 WandbMetricsLogger(log_freq="batch"),
