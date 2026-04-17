@@ -14,7 +14,8 @@ def addToDataset(article: dict):
     }
     with open(DATA_PATH, "a", encoding="utf-8") as f:
         f.write(repr(record) + "\n")
-    print(f"Appended: [{record['location']}] {record['text'][:60]}...")
+    model_tag = f"[{article.get('model', '?')}] " if article.get('model') else ""
+    print(f"Appended: [{record['location']}] {model_tag}{record['text'][:60]}...")
 
 
 if __name__ == "__main__":

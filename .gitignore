@@ -3,3 +3,4 @@ __pycache__/
 wandb/
 *.keras
 *.h5
+.env
