@@ -1,3 +1,6 @@
+add weight to loss based on the count of each category
+add diffrent kernel size like 3 5 7 5 3 to improve preformance even more
+
 from transformers import AutoTokenizer
 import tensorflow as tf
 from tensorflow import keras
