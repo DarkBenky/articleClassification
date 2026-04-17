@@ -1,3 +1,5 @@
+add weight to loss based on the count of each category
+
 from transformers import AutoTokenizer
 import tensorflow as tf
 from tensorflow import keras
