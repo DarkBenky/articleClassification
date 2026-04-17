@@ -19,6 +19,9 @@ CLOUD_WORKERS = [
     {"model": "openai/gpt-oss-120b",                     "provider": "deepinfra/bf16"},
     {"model": "google/gemma-4-26b-a4b-it",               "provider": "deepinfra/fp8"},
     {"model": "mistralai/mistral-nemo",                  "provider": "deepinfra/fp8"},
+    {"model": "qwen/qwen3.5-9b",                         "provider": "venice/fp8"},
+    {"model": "stepfun/step-3.5-flash",                  "provider": "deepinfra/fp8"},
+    {"model": "openai/gpt-oss-20b",                  "provider": "amazon-bedrock"},
 ]
 
 CLOUD_DELAY = 0.0
