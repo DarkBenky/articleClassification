@@ -90,17 +90,24 @@ tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v
 TOKENIZED_DIR = "/media/user/2TB/tokenizedtext"
 
 
-def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.2, denseLayers=2):
+def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.2, denseLayers=2, num_heads=4, attn_dim=256):
     inputs = keras.Input(shape=(CONTEXT_SIZE,))
     x = layers.Embedding(input_dim=vocab_size, output_dim=embedding_dim)(inputs)
 
     branches = []
     for ks in kernel_sizes:
         branch = layers.Conv1D(conv_units, ks, activation="relu", padding="same")(x)
-        branch = layers.GlobalMaxPooling1D()(branch)
         branches.append(branch)
 
-    x = layers.Concatenate()(branches) if len(branches) > 1 else branches[0]
+    x = layers.Concatenate(axis=-1)(branches) if len(branches) > 1 else branches[0]
+
+    x = layers.Dense(attn_dim)(x)
+
+    attn_out = layers.MultiHeadAttention(num_heads=num_heads, key_dim=attn_dim // num_heads)(x, x)
+    x = layers.Add()([x, attn_out])
+    x = layers.LayerNormalization()(x)
+
+    x = layers.GlobalAveragePooling1D()(x)
     x = layers.Dropout(dropout_rate)(x)
 
     for _ in range(denseLayers):

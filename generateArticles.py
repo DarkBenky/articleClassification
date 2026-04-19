@@ -25,6 +25,7 @@ CLOUD_WORKERS = [
     {"model": "qwen/qwen3.5-9b",                         "provider": "venice/fp8"},
     {"model": "stepfun/step-3.5-flash",                  "provider": "deepinfra/fp8"},
     {"model": "openai/gpt-oss-20b",                      "provider": "amazon-bedrock"},
+    {"model": "z-ai/glm-4.7-flash",                      "provider": "deepinfra/bf16"},
 ]
 
 CLOUD_DELAY = 0.0
