@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-USE_CLOUD = True
+USE_CLOUD = False
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 ELEPHANT_MODEL   = "openrouter/elephant-alpha"
