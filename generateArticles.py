@@ -4,11 +4,21 @@ import csv
 import time
 import random
 import os
+import re
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 load_dotenv()
+
+try:
+    from langdetect import detect as _lang_detect
+    _LANGDETECT_AVAILABLE = True
+except ImportError:
+    _LANGDETECT_AVAILABLE = False
+
+MIN_WORD_COUNT = 50
 
 USE_CLOUD = True
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
@@ -34,6 +44,7 @@ CLOUD_WORKERS = [
     {"model": "liquid/lfm-2-24b-a2b",                      "provider": "together"},
     {"model": "z-ai/glm-4.5-air:free",                      "provider": "z-ai"},
     {"model": "amazon/nova-micro-v1",                      "provider": "amazon-bedrock"},
+    {"model": "deepseek/deepseek-v4-flash",                      "provider": "novita"},
 ]
 
 CLOUD_DELAY = 0.0
@@ -70,7 +81,7 @@ def createPrompt(subject, type_, style, location, date):
             f"set specifically in {location}. "
             f"Ground every detail firmly in {location} — do not make it generic or global."
         )
-    return (
+    prompt = (
         f"Write a {style.lower()}, {type_.lower()} news article about {subject.lower()} "
         f"{location_instruction} "
         f"The article must read like a real published piece from {date}: include a headline, "
@@ -79,6 +90,25 @@ def createPrompt(subject, type_, style, location, date):
         f"Length: 200-400 words. Output only the article text, no commentary. "
         f"Avoid using any emojis or special characters. The article should be in English."
     )
+    return prompt, use_indirect
+
+def clean_article(text):
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    return text.strip()
+
+
+def is_english(text):
+    if not _LANGDETECT_AVAILABLE:
+        return True
+    try:
+        return _lang_detect(text[:600]) == "en"
+    except Exception:
+        return True
+
+
+def leaks_location(text, location):
+    return bool(re.search(re.escape(location), text, re.IGNORECASE))
+
 
 if __name__ == "__main__":
     flipCodeToName, NameToFlipCode = getCountries()
@@ -223,9 +253,12 @@ if __name__ == "__main__":
     print("-" * 60)
 
     lock  = threading.Lock()
-    stats = {"counter": 0, "errors": 0, "start_time": time.time()}
-    elephant_lock  = threading.Lock()   # only one worker tries elephant at a time
-    elephant_state = {"fails": 0, "active": True}  # shared across all workers
+    stats = {"counter": 0, "errors": 0, "start_time": time.time(),
+             "indirect_total": 0, "indirect_leaks": 0}
+    fips_counts = defaultdict(int)
+    pair_counts = defaultdict(int)
+    elephant_lock  = threading.Lock()
+    elephant_state = {"fails": 0, "active": True}
 
     def call_cloud(model, provider, messages, temperature=0.7, top_p=0.8):
         """Single API call; returns content string or raises."""
@@ -246,15 +279,23 @@ if __name__ == "__main__":
         model    = worker_cfg["model"] if USE_CLOUD else MODEL
         provider = worker_cfg.get("provider")
         while True:
-            fips_code, location = random.choice(fips_items)
-            subject = random.choice(SUBJECTS)
-            type_   = random.choice(TYPES)
-            style   = random.choice(STYLES)
-            year    = random.randint(2000, 2035)
-            month   = random.randint(1, 12)
-            day     = random.randint(1, 28)
+            with lock:
+                counts_snapshot = dict(fips_counts)
+                pair_snapshot   = dict(pair_counts)
+
+            fips_weights = [1.0 / (counts_snapshot.get(code, 0) + 1) for code, _ in fips_items]
+            fips_code, location = random.choices(fips_items, weights=fips_weights, k=1)[0]
+
+            subject_weights = [1.0 / (pair_snapshot.get((fips_code, s), 0) + 1) for s in SUBJECTS]
+            subject = random.choices(SUBJECTS, weights=subject_weights, k=1)[0]
+
+            type_  = random.choice(TYPES)
+            style  = random.choice(STYLES)
+            year   = random.randint(2020, 2026) if random.random() < 0.65 else random.randint(2000, 2035)
+            month  = random.randint(1, 12)
+            day    = random.randint(1, 28)
             date_str = f"{day}. {time.strftime('%B', time.strptime(str(month), '%m'))} {year}"
-            prompt  = createPrompt(subject, type_, style, location, date_str)
+            prompt, use_indirect = createPrompt(subject, type_, style, location, date_str)
             article_text = None
             try:
                 if USE_CLOUD:
@@ -313,15 +354,44 @@ if __name__ == "__main__":
                     article_text = response.message.content.strip()
 
                 if article_text:
+                    article_text = clean_article(article_text)
+
+                    if len(article_text.split()) < MIN_WORD_COUNT:
+                        with lock:
+                            stats["errors"] += 1
+                        print(f"  [SKIP][{model}] {location}: too short ({len(article_text.split())} words)")
+                        continue
+
+                    if not is_english(article_text):
+                        with lock:
+                            stats["errors"] += 1
+                        print(f"  [SKIP][{model}] {location}: non-English output")
+                        continue
+
+                    if use_indirect and leaks_location(article_text, location):
+                        with lock:
+                            stats["indirect_total"] += 1
+                            stats["indirect_leaks"] += 1
+                    elif use_indirect:
+                        with lock:
+                            stats["indirect_total"] += 1
+
                     with lock:
                         addToDataset({"text": article_text, "location": fips_code, "category": subject, "model": model})
+                        fips_counts[fips_code] += 1
+                        pair_counts[(fips_code, subject)] += 1
                         stats["counter"] += 1
                         cnt  = stats["counter"]
                         errs = stats["errors"]
                     elapsed = time.time() - stats["start_time"]
                     if cnt % 10 == 0:
                         apm = cnt / elapsed * 60 if elapsed > 0 else 0
-                        print(f"[{cnt:,} generated] {apm:.1f} art/min | errors: {errs}")
+                        ind_total = stats["indirect_total"]
+                        ind_leaks = stats["indirect_leaks"]
+                        ind_success = (1 - ind_leaks / ind_total) * 100 if ind_total else 0
+                        print(f"[{cnt:,} generated] {apm:.1f} art/min | errors: {errs} | "
+                              f"indirect: {ind_total} attempts, {ind_leaks} leaks "
+                              f"({ind_success:.1f}% success)")
 
             except Exception as e:
                 with lock:
