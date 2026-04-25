@@ -90,9 +90,20 @@ tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v
 TOKENIZED_DIR = "/media/user/2TB/tokenizedtext"
 
 
-def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.2, denseLayers=2):
+def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=2):
     inputs = keras.Input(shape=(CONTEXT_SIZE,))
     x = layers.Embedding(input_dim=vocab_size, output_dim=embedding_dim)(inputs)
+
+    # Stacked transformer encoder blocks (attention -> Add+Norm -> FFN -> Add+Norm)
+    for _ in range(num_transformer_blocks):
+        attn = layers.MultiHeadAttention(num_heads=num_heads, key_dim=embedding_dim // num_heads, dropout=dropout_rate)(x, x)
+        x = layers.Add()([x, attn])
+        x = layers.LayerNormalization()(x)
+        ffn = layers.Dense(embedding_dim * 4, activation="relu")(x)
+        ffn = layers.Dropout(dropout_rate)(ffn)
+        ffn = layers.Dense(embedding_dim)(ffn)
+        x = layers.Add()([x, ffn])
+        x = layers.LayerNormalization()(x)
 
     branches = []
     for ks in kernel_sizes:
@@ -156,13 +167,13 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.3, denseLayers=1)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.3, denseLayers=1, num_heads=4, num_transformer_blocks=2)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
 
             wandb.config.update({"model_size": model.count_params(), "train_size": train_size, "val_size": val_size})
 
-            checkpoint_best = BestValCheckpoint(MODEL_PATH, unique_locations=unique_locations, val_ds=val_ds, save_freq_batches=2048, val_steps=16, warmup_batches=4096)
+            checkpoint_best = BestValCheckpoint(MODEL_PATH, unique_locations=unique_locations, val_ds=val_ds, save_freq_batches=2048, val_steps=32, warmup_batches=4096)
 
             model.fit(train_ds, epochs=EPOCHS, validation_data=val_ds, callbacks=[
                 WandbMetricsLogger(log_freq="batch"),
