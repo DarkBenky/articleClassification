@@ -90,9 +90,15 @@ tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v
 TOKENIZED_DIR = "/media/user/2TB/tokenizedtext"
 
 
-def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=2):
+def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7], conv_units=512, units=512, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=4):
     inputs = keras.Input(shape=(CONTEXT_SIZE,))
-    x = layers.Embedding(input_dim=vocab_size, output_dim=embedding_dim)(inputs)
+    tok_emb = layers.Embedding(input_dim=vocab_size, output_dim=embedding_dim, name="token_embedding")(inputs)
+    pos_ids = layers.Lambda(
+        lambda x: tf.broadcast_to(tf.range(tf.shape(x)[1])[tf.newaxis, :], tf.shape(x)),
+        name="position_ids"
+    )(inputs)
+    pos_emb = layers.Embedding(input_dim=CONTEXT_SIZE, output_dim=embedding_dim, name="position_embedding")(pos_ids)
+    x = layers.Add(name="token_pos_add")([tok_emb, pos_emb])
 
     # Stacked transformer encoder blocks (attention -> Add+Norm -> FFN -> Add+Norm)
     for _ in range(num_transformer_blocks):
@@ -118,13 +124,14 @@ def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7,
         x = layers.Dense(units, activation="relu")(x)
         x = layers.Dropout(dropout_rate)(x)
 
-    outputs = layers.Dense(output_dim, activation="softmax")(x)
+    outputs = layers.Dense(output_dim, activation="softmax", dtype="float32")(x)
 
     model = keras.Model(inputs, outputs)
     model.compile(optimizer=tf.keras.optimizers.Adam(clipnorm=1.0), loss="sparse_categorical_crossentropy", metrics=["accuracy"])
     return model
 
 if __name__ == "__main__":
+    tf.keras.mixed_precision.set_global_policy("mixed_float16")
     MODEL_PATH = "location_model_best.keras"
 
     with open("unique_fips_locations.json", "r") as f:
@@ -167,7 +174,7 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7, 5, 3], conv_units=345, units=512, dropout_rate=0.3, denseLayers=1, num_heads=4, num_transformer_blocks=2)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=256, kernel_sizes=[3, 5, 7], conv_units=512, units=1024, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=6)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
 
