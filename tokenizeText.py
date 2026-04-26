@@ -43,7 +43,7 @@ def _iter_data(location_to_fips, fips_to_idx, lines_read_counter):
                 fips = location_to_fips[item["location"]]
                 if fips not in fips_to_idx:
                     continue
-                if fips == "Unknown" and random.random() > 0.005:  # Keep only ~0.5% of Unknown to avoid dominating training
+                if fips == "Unknown" and random.random() > 0.0005:  # Keep only ~0.05% of Unknown to avoid dominating training
                     continue
                 yield text, fips_to_idx[fips]
             except Exception:

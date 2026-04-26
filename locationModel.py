@@ -2,6 +2,7 @@ from transformers import AutoTokenizer
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from model_layers import PositionalEmbedding
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Conv1D, GlobalMaxPooling1D, Embedding
 import numpy as np
@@ -41,6 +42,16 @@ class BestValCheckpoint(Callback):
         self.best_val_loss = float("inf")
         self._batch_count = 0
 
+    def _evaluate(self, ds):
+        """Evaluate without disrupting the training progress bar metrics."""
+        # Save running metric state so model.evaluate() doesn't reset the training accumulators
+        metric_states = [[v.numpy() for v in m.variables] for m in self.model.metrics]
+        val_loss, val_acc = self.model.evaluate(ds, verbose=0)
+        for m, state in zip(self.model.metrics, metric_states):
+            for v, s in zip(m.variables, state):
+                v.assign(s)
+        return val_loss, val_acc
+
     def _check_and_save(self, val_loss, val_acc, label):
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
@@ -52,7 +63,7 @@ class BestValCheckpoint(Callback):
         self._batch_count += 1
         if self._batch_count % self.save_freq_batches != 0:
             return
-        val_loss, val_acc = self.model.evaluate(self.val_ds.take(self.val_steps), verbose=0)
+        val_loss, val_acc = self._evaluate(self.val_ds.take(self.val_steps))
         wandb.log({"batch_val_loss": val_loss, "batch_val_accuracy": val_acc})
         print(f"\nBatch {self._batch_count}: val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
         if self._batch_count < self.warmup_batches:
@@ -62,7 +73,7 @@ class BestValCheckpoint(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         # evaluate on the full val set at end of each epoch — more reliable than batch samples
-        val_loss, val_acc = self.model.evaluate(self.val_ds, verbose=0)
+        val_loss, val_acc = self._evaluate(self.val_ds)
         wandb.log({"epoch_full_val_loss": val_loss, "epoch_full_val_accuracy": val_acc, "epoch": epoch})
         print(f"\nEpoch {epoch + 1} full val: val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
         self._check_and_save(val_loss, val_acc, f"epoch {epoch + 1}")
@@ -92,13 +103,7 @@ TOKENIZED_DIR = "/media/user/2TB/tokenizedtext"
 
 def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7], conv_units=512, units=512, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=4):
     inputs = keras.Input(shape=(CONTEXT_SIZE,))
-    tok_emb = layers.Embedding(input_dim=vocab_size, output_dim=embedding_dim, name="token_embedding")(inputs)
-    pos_ids = layers.Lambda(
-        lambda x: tf.broadcast_to(tf.range(tf.shape(x)[1])[tf.newaxis, :], tf.shape(x)),
-        name="position_ids"
-    )(inputs)
-    pos_emb = layers.Embedding(input_dim=CONTEXT_SIZE, output_dim=embedding_dim, name="position_embedding")(pos_ids)
-    x = layers.Add(name="token_pos_add")([tok_emb, pos_emb])
+    x = PositionalEmbedding(vocab_size=vocab_size, context_size=CONTEXT_SIZE, embedding_dim=embedding_dim, name="positional_embedding")(inputs)
 
     # Stacked transformer encoder blocks (attention -> Add+Norm -> FFN -> Add+Norm)
     for _ in range(num_transformer_blocks):
@@ -174,7 +179,7 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=256, kernel_sizes=[3, 5, 7], conv_units=512, units=1024, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=6)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7], conv_units=512, units=1024, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=2)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
 
@@ -192,7 +197,7 @@ if __name__ == "__main__":
         print(f"Found existing model at {MODEL_PATH}, skipping training.")
 
     print(f"\nLoading model from {MODEL_PATH} for inference...")
-    model = tf.keras.models.load_model(MODEL_PATH)
+    model = tf.keras.models.load_model(MODEL_PATH, custom_objects={"PositionalEmbedding": PositionalEmbedding})
 
     test_texts = TEST_TEXTS
 

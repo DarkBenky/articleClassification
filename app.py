@@ -27,9 +27,11 @@ EXAMPLE_TEXTS = [
 ]
 
 
+from model_layers import PositionalEmbedding
+
 @st.cache_resource
 def load_resources():
-    model = tf.keras.models.load_model(MODEL_PATH)
+    model = tf.keras.models.load_model(MODEL_PATH, custom_objects={"PositionalEmbedding": PositionalEmbedding})
 
     tokenizer = Tokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
     tokenizer.enable_padding(length=CONTEXT_SIZE)
