@@ -101,20 +101,41 @@ tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v
 TOKENIZED_DIR = "/media/user/2TB/tokenizedtext"
 
 
-def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7], conv_units=512, units=512, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=4):
+class WarmupCosineDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
+    """Linear warmup then cosine decay."""
+    def __init__(self, peak_lr, warmup_steps, total_steps):
+        super().__init__()
+        self.peak_lr = peak_lr
+        self.warmup_steps = float(warmup_steps)
+        self.total_steps = float(total_steps)
+
+    def __call__(self, step):
+        step = tf.cast(step, tf.float32)
+        warmup_lr = self.peak_lr * (step / self.warmup_steps)
+        cosine_lr = self.peak_lr * 0.5 * (1.0 + tf.cos(
+            tf.constant(3.14159265) * (step - self.warmup_steps) / (self.total_steps - self.warmup_steps)
+        ))
+        return tf.where(step < self.warmup_steps, warmup_lr, cosine_lr)
+
+    def get_config(self):
+        return {"peak_lr": self.peak_lr, "warmup_steps": self.warmup_steps, "total_steps": self.total_steps}
+
+
+def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7], conv_units=512, units=512, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=4, lr_schedule=None):
     inputs = keras.Input(shape=(CONTEXT_SIZE,))
     x = PositionalEmbedding(vocab_size=vocab_size, context_size=CONTEXT_SIZE, embedding_dim=embedding_dim, name="positional_embedding")(inputs)
 
     # Stacked transformer encoder blocks (attention -> Add+Norm -> FFN -> Add+Norm)
+    # LayerNorm forced to float32 to avoid float16 numerical instability under mixed precision
     for _ in range(num_transformer_blocks):
         attn = layers.MultiHeadAttention(num_heads=num_heads, key_dim=embedding_dim // num_heads, dropout=dropout_rate)(x, x)
         x = layers.Add()([x, attn])
-        x = layers.LayerNormalization()(x)
+        x = layers.LayerNormalization(dtype='float32')(x)
         ffn = layers.Dense(embedding_dim * 4, activation="relu")(x)
         ffn = layers.Dropout(dropout_rate)(ffn)
         ffn = layers.Dense(embedding_dim)(ffn)
         x = layers.Add()([x, ffn])
-        x = layers.LayerNormalization()(x)
+        x = layers.LayerNormalization(dtype='float32')(x)
 
     branches = []
     for ks in kernel_sizes:
@@ -132,7 +153,8 @@ def buildModel(output_dim, vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7]
     outputs = layers.Dense(output_dim, activation="softmax", dtype="float32")(x)
 
     model = keras.Model(inputs, outputs)
-    model.compile(optimizer=tf.keras.optimizers.Adam(clipnorm=1.0), loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule or 1e-4, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss="sparse_categorical_crossentropy", metrics=["accuracy"])
     return model
 
 if __name__ == "__main__":
@@ -179,7 +201,11 @@ if __name__ == "__main__":
                   .prefetch(tf.data.AUTOTUNE))
 
         with wandb.init(project="article-classification") as run:
-            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=128, kernel_sizes=[3, 5, 7], conv_units=512, units=1024, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=2)
+            steps_per_epoch = train_size // BATCH_SIZE
+            total_steps = steps_per_epoch * EPOCHS
+            warmup_steps = steps_per_epoch * 2  # 2 epoch warmup
+            lr_schedule = WarmupCosineDecay(peak_lr=3e-4, warmup_steps=warmup_steps, total_steps=total_steps)
+            model = buildModel(output_dim=len(unique_locations), vocab_size=tokenizer.vocab_size, embedding_dim=256, kernel_sizes=[3], conv_units=768, units=1024, dropout_rate=0.2, denseLayers=1, num_heads=4, num_transformer_blocks=4, lr_schedule=lr_schedule)
             model.build(input_shape=(None, CONTEXT_SIZE))
             model.summary()
 
