@@ -20,31 +20,31 @@ except ImportError:
 
 MIN_WORD_COUNT = 50
 
-USE_CLOUD = False
+USE_CLOUD = True
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 ELEPHANT_MODEL   = "openrouter/elephant-alpha"
 ELEPHANT_MAX_FAILS = 3   # after this many failures, stop trying elephant for this run
 
 CLOUD_WORKERS = [
-    {"model": "mistralai/mistral-small-3.2-24b-instruct", "provider": "deepinfra/fp8"},
+    # {"model": "mistralai/mistral-small-3.2-24b-instruct", "provider": "deepinfra/fp8"},
     # {"model": "qwen/qwen3.5-flash-02-23",                "provider": "alibaba"},
-    {"model": "openai/gpt-oss-120b",                     "provider": "deepinfra/bf16"},
-    {"model": "google/gemma-4-26b-a4b-it",               "provider": "deepinfra/fp8"},
-    {"model": "mistralai/mistral-nemo",                  "provider": "deepinfra/fp8"},
-    {"model": "qwen/qwen3.5-9b",                         "provider": "venice/fp8"},
+    # {"model": "openai/gpt-oss-120b",                     "provider": "deepinfra/bf16"},
+    # {"model": "google/gemma-4-26b-a4b-it",               "provider": "deepinfra/fp8"},
+    # {"model": "mistralai/mistral-nemo",                  "provider": "deepinfra/fp8"},
+    # {"model": "qwen/qwen3.5-9b",                         "provider": "venice/fp8"},
     # {"model": "stepfun/step-3.5-flash",                  "provider": "deepinfra/fp8"},
-    {"model": "openai/gpt-oss-20b",                      "provider": "amazon-bedrock"},
+    # {"model": "openai/gpt-oss-20b",                      "provider": "amazon-bedrock"},
     # {"model": "z-ai/glm-4.7-flash",                      "provider": "deepinfra/bf16"},
-    {"model": "inclusionai/ling-2.6-1t:free",                      "provider": "novita"},
-    {"model": "tencent/hy3-preview:free",                      "provider": "siliconflow"},
-    {"model": "inclusionai/ling-2.6-flash:free",                      "provider": "novita"},
-    {"model": "google/gemma-4-26b-a4b-it:free",                      "provider": "google-ai-studio"},
-    {"model": "minimax/minimax-m2.5:free",                      "provider": "open-inference/int8"},
-    {"model": "liquid/lfm-2-24b-a2b",                      "provider": "together"},
-    {"model": "z-ai/glm-4.5-air:free",                      "provider": "z-ai"},
-    {"model": "amazon/nova-micro-v1",                      "provider": "amazon-bedrock"},
-    {"model": "deepseek/deepseek-v4-flash",                      "provider": "novita"},
+    # {"model": "inclusionai/ling-2.6-1t:free",                      "provider": "novita"},
+    # {"model": "tencent/hy3-preview:free",                      "provider": "siliconflow"},
+    # {"model": "inclusionai/ling-2.6-flash:free",                      "provider": "novita"},
+    # {"model": "google/gemma-4-26b-a4b-it:free",                      "provider": "google-ai-studio"},
+    # {"model": "minimax/minimax-m2.5:free",                      "provider": "open-inference/int8"},
+    # {"model": "liquid/lfm-2-24b-a2b",                      "provider": "together"},
+    # {"model": "z-ai/glm-4.5-air:free",                      "provider": "z-ai"},
+    # {"model": "amazon/nova-micro-v1",                      "provider": "amazon-bedrock"},
+    {"model": "deepseek/deepseek-v4-flash",                      "provider": "baidu/fp8"},
 ]
 
 CLOUD_DELAY = 0.0
