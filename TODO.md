@@ -3,6 +3,7 @@
 - [ ] process all news from <http://data.gdeltproject.org/events/index.html>
     - [ ] download all and un zip add to collection
 
+- [ ] Categories are now mass consolidate them to like +/-100
 - [ ] train small embedding model for this task example
 
 ```python
