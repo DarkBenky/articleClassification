@@ -1,10 +1,12 @@
 # TODO
 
-- [ ] process all news from <http://data.gdeltproject.org/events/index.html>
-    - [ ] download all and un zip add to collection
+- [ ] Process all news from GDELT Events (<http://data.gdeltproject.org/events/index.html>)
+    - The old loader was removed during cleanup; reimplement it using `data/raw/CODES.csv` for CAMEO labels.
 
-- [ ] Categories are now mass consolidate them to like +/-100
-- [ ] train small embedding model for this task example
+- [ ] Categories are now mass consolidated to roughly +/-100
+    - `scripts/consolidateCategories.py` maps category labels to GENERAL NEWS TOPICS (210-227).
+
+- [ ] Train a small embedding model for this task, for example:
 
 ```python
 import torch

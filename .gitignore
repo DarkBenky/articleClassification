@@ -4,3 +4,7 @@ wandb/
 *.keras
 *.h5
 .env
+
+# Generated charts (the original charts remain tracked)
+artifacts/raw_top_locations.png
+artifacts/tokenized_top_locations.png
