@@ -36,6 +36,7 @@ CHUNK_SIZE = 4096
 MAX_LENGTH = 512
 LOG_EVERY = 10
 DROPOUT = 0.2
+CHECKPOINT_EVERY = 100
 
 if torch.cuda.is_available():
     deviceIndex = max(
@@ -60,6 +61,16 @@ def getFipCodes():
     return list(fipCodes.keys()), list(fipCodes.values())
 
 
+def countLines(path):
+    total = 0
+    lastByte = b""
+    with open(path, "rb") as f:
+        while chunk := f.read(8 * 1024 * 1024):
+            total += chunk.count(b"\n")
+            lastByte = chunk[-1:]
+    return total + (1 if lastByte and lastByte != b"\n" else 0)
+
+
 fipCodes, countryNames = getFipCodes()
 fipCodeCount = len(fipCodes)
 print(f"FIP codes count: {fipCodeCount}")
@@ -69,6 +80,18 @@ labelToIndex.update({code: i for i, code in enumerate(fipCodes)})
 
 with open(LOCATION_TO_FIPS_PATH, encoding="utf-8") as f:
     locationToFips = json.load(f)
+
+print(f"Counting records in {CORPUS_PATH}...")
+totalRecords = countLines(CORPUS_PATH)
+fullChunks, remainder = divmod(totalRecords, CHUNK_SIZE)
+stepsPerEpoch = fullChunks * ((CHUNK_SIZE + BATCH_SIZE - 1) // BATCH_SIZE)
+if remainder:
+    stepsPerEpoch += (remainder + BATCH_SIZE - 1) // BATCH_SIZE
+totalSteps = stepsPerEpoch * EPOCHS
+print(
+    f"Corpus records: {totalRecords:,} | steps per epoch: {stepsPerEpoch:,} | "
+    f"total steps: {totalSteps:,}"
+)
 
 name = "Qwen/Qwen3-Embedding-0.6B"
 tok = AutoTokenizer.from_pretrained(name, padding_side="left")
@@ -192,16 +215,60 @@ wandb.init(
         "epochs": EPOCHS,
         "chunk_size": CHUNK_SIZE,
         "dropout": DROPOUT,
+        "checkpoint_every": CHECKPOINT_EVERY,
+        "total_records": totalRecords,
+        "total_steps": totalSteps,
     },
 )
 
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 bestModelPath = MODELS_DIR / f"location_classifier_torch_{run_name}.pt"
-bestLoss = float("inf")
+bestWindowLoss = float("inf")
+windowLoss = 0.0
+windowSteps = 0
 sampleTable = wandb.Table(
     columns=["step", "epoch", "text", "expected", "predicted", "confidence"],
     log_mode="MUTABLE",
 )
+saveTable = wandb.Table(
+    columns=["step", "epoch", "window_loss"],
+    log_mode="MUTABLE",
+)
+
+
+def removeOldCheckpoints(keepPath):
+    for path in MODELS_DIR.glob("location_classifier_torch_*.pt"):
+        if path != keepPath:
+            path.unlink(missing_ok=True)
+    for path in MODELS_DIR.glob("location_classifier_torch*.tmp"):
+        path.unlink(missing_ok=True)
+    legacyPath = MODELS_DIR / "location_classifier_torch.pt"
+    if legacyPath != keepPath and legacyPath.exists():
+        legacyPath.unlink()
+
+
+def saveIfBest(avgLoss, epoch, step, currentBest):
+    if avgLoss >= currentBest:
+        return currentBest, False
+    checkpoint = {
+        "head": head.state_dict(),
+        "fipCodes": fipCodes,
+        "countryNames": countryNames,
+        "base_name": name,
+        "train_base": TRAIN_BASE,
+        "run_name": run_name,
+        "epoch": epoch,
+        "step": step,
+        "loss": avgLoss,
+    }
+    if TRAIN_BASE:
+        checkpoint["base"] = base.state_dict()
+    tempPath = bestModelPath.with_suffix(".tmp")
+    torch.save(checkpoint, tempPath)
+    os.replace(tempPath, bestModelPath)
+    removeOldCheckpoints(bestModelPath)
+    return avgLoss, True
+
 
 base.train(TRAIN_BASE)
 head.train(TRAIN_HEAD)
@@ -223,8 +290,17 @@ for epoch in range(EPOCHS):
         step += 1
         epochLoss += loss
         epochBatches += 1
+        windowLoss += loss
+        windowSteps += 1
         skipRate = skipped / seen * 100 if seen else 0.0
-        logData = {"loss": loss, "acc": acc, "epoch": epoch, "skip_pct": skipRate}
+        progressPct = step / totalSteps * 100 if totalSteps else 0.0
+        logData = {
+            "loss": loss,
+            "acc": acc,
+            "epoch": epoch,
+            "skip_pct": skipRate,
+            "progress_pct": progressPct,
+        }
         if step % LOG_EVERY == 0:
             text, expected, predicted, confidence = sample
             preview = " ".join(text.split())[:500]
@@ -233,29 +309,44 @@ for epoch in range(EPOCHS):
             sampleTable.add_data(step, epoch, preview, expectedLabel, predictedLabel, confidence)
             logData["sample_predictions"] = sampleTable
             print(
-                f"epoch {epoch} step {step} loss {loss:.4f} acc {acc:.3f} skip {skipRate:.1f}%\n"
+                f"epoch {epoch} step {step}/{totalSteps} ({progressPct:.1f}%) "
+                f"loss {loss:.4f} acc {acc:.3f} skip {skipRate:.1f}%\n"
                 f"  expected {expectedLabel} | predicted {predictedLabel} {confidence:.3f}\n"
                 f"  text {preview[:100]}"
             )
+        if step % CHECKPOINT_EVERY == 0 and windowSteps:
+            windowAvg = windowLoss / windowSteps
+            bestWindowLoss, saved = saveIfBest(windowAvg, epoch, step, bestWindowLoss)
+            logData["window_loss"] = windowAvg
+            logData["best_window_loss"] = bestWindowLoss
+            logData["checkpoint_saved"] = int(saved)
+            if saved:
+                saveTable.add_data(step, epoch, windowAvg)
+                logData["checkpoint_saves"] = saveTable
+                logData["saved_step"] = step
+                print(f"step {step}/{totalSteps} window loss {windowAvg:.4f} saved {bestModelPath}")
+            windowLoss = 0.0
+            windowSteps = 0
         wandb.log(logData, step=step)
     if epochBatches == 0:
         continue
     epochLoss /= epochBatches
-    if epochLoss < bestLoss:
-        bestLoss = epochLoss
-        torch.save(
-            {
-                "base": base.state_dict(),
-                "head": head.state_dict(),
-                "fipCodes": fipCodes,
-                "countryNames": countryNames,
-                "epoch": epoch,
-                "loss": bestLoss,
-            },
-            bestModelPath,
-        )
-        wandb.log({"best_loss": bestLoss, "epoch_loss": epochLoss}, step=step)
-        print(f"epoch {epoch} loss {epochLoss:.4f} saved {bestModelPath}")
+    print(f"epoch {epoch} avg loss {epochLoss:.4f}")
+
+if windowSteps:
+    windowAvg = windowLoss / windowSteps
+    bestWindowLoss, saved = saveIfBest(windowAvg, epoch, step, bestWindowLoss)
+    finalLog = {
+        "final_window_loss": windowAvg,
+        "best_window_loss": bestWindowLoss,
+        "checkpoint_saved": int(saved),
+    }
+    if saved:
+        saveTable.add_data(step, epoch, windowAvg)
+        finalLog["checkpoint_saves"] = saveTable
+        finalLog["saved_step"] = step
+        print(f"step {step}/{totalSteps} final window loss {windowAvg:.4f} saved {bestModelPath}")
+    wandb.log(finalLog, step=step)
 
 base.eval()
 head.eval()
