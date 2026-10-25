@@ -104,13 +104,16 @@ head = nn.Sequential(
     nn.Linear(size, 4096),
     nn.GELU(),
     nn.Dropout(DROPOUT),
-    nn.Linear(4096, 1024),
+    nn.Linear(4096, 4096),
     nn.GELU(),
     nn.Dropout(DROPOUT),
-    nn.Linear(1024, 512),
+    nn.Linear(4096, 2048),
     nn.GELU(),
     nn.Dropout(DROPOUT),
-    nn.Linear(512, fipCodeCount),
+    nn.Linear(2048, 1024),
+    nn.GELU(),
+    nn.Dropout(DROPOUT),
+    nn.Linear(1024, fipCodeCount),
 ).to(device)
 
 for p in base.parameters():
@@ -238,17 +241,6 @@ saveTable = wandb.Table(
 )
 
 
-def removeOldCheckpoints(keepPath):
-    for path in MODELS_DIR.glob("location_classifier_torch_*.pt"):
-        if path != keepPath:
-            path.unlink(missing_ok=True)
-    for path in MODELS_DIR.glob("location_classifier_torch*.tmp"):
-        path.unlink(missing_ok=True)
-    legacyPath = MODELS_DIR / "location_classifier_torch.pt"
-    if legacyPath != keepPath and legacyPath.exists():
-        legacyPath.unlink()
-
-
 def saveIfBest(avgLoss, epoch, step, currentBest):
     if avgLoss >= currentBest:
         return currentBest, False
@@ -268,7 +260,6 @@ def saveIfBest(avgLoss, epoch, step, currentBest):
     tempPath = bestModelPath.with_suffix(".tmp")
     torch.save(checkpoint, tempPath)
     os.replace(tempPath, bestModelPath)
-    removeOldCheckpoints(bestModelPath)
     return avgLoss, True
 
 

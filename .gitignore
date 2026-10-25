@@ -3,6 +3,7 @@ __pycache__/
 wandb/
 *.keras
 *.h5
+*.pt
 .env
 
 # Generated charts (the original charts remain tracked)
