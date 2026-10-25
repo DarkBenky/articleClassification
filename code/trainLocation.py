@@ -35,6 +35,7 @@ EPOCHS = 3
 CHUNK_SIZE = 4096
 MAX_LENGTH = 512
 LOG_EVERY = 10
+SAMPLE_LOG_EVERY = 1000
 DROPOUT = 0.2
 CHECKPOINT_EVERY = 100
 
@@ -216,6 +217,7 @@ wandb.init(
         "chunk_size": CHUNK_SIZE,
         "dropout": DROPOUT,
         "checkpoint_every": CHECKPOINT_EVERY,
+        "sample_log_every": SAMPLE_LOG_EVERY,
         "total_records": totalRecords,
         "total_steps": totalSteps,
     },
@@ -301,19 +303,21 @@ for epoch in range(EPOCHS):
             "skip_pct": skipRate,
             "progress_pct": progressPct,
         }
-        if step % LOG_EVERY == 0:
+        if step % LOG_EVERY == 0 or step % SAMPLE_LOG_EVERY == 0:
             text, expected, predicted, confidence = sample
             preview = " ".join(text.split())[:500]
             expectedLabel = f"{countryNames[expected]} ({fipCodes[expected]})"
             predictedLabel = f"{countryNames[predicted]} ({fipCodes[predicted]})"
-            sampleTable.add_data(step, epoch, preview, expectedLabel, predictedLabel, confidence)
-            logData["sample_predictions"] = sampleTable
-            print(
-                f"epoch {epoch} step {step}/{totalSteps} ({progressPct:.1f}%) "
-                f"loss {loss:.4f} acc {acc:.3f} skip {skipRate:.1f}%\n"
-                f"  expected {expectedLabel} | predicted {predictedLabel} {confidence:.3f}\n"
-                f"  text {preview[:100]}"
-            )
+            if step % SAMPLE_LOG_EVERY == 0:
+                sampleTable.add_data(step, epoch, preview, expectedLabel, predictedLabel, confidence)
+                logData["sample_predictions"] = sampleTable
+            if step % LOG_EVERY == 0:
+                print(
+                    f"epoch {epoch} step {step}/{totalSteps} ({progressPct:.1f}%) "
+                    f"loss {loss:.4f} acc {acc:.3f} skip {skipRate:.1f}%\n"
+                    f"  expected {expectedLabel} | predicted {predictedLabel} {confidence:.3f}\n"
+                    f"  text {preview[:100]}"
+                )
         if step % CHECKPOINT_EVERY == 0 and windowSteps:
             windowAvg = windowLoss / windowSteps
             bestWindowLoss, saved = saveIfBest(windowAvg, epoch, step, bestWindowLoss)
