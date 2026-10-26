@@ -29,6 +29,7 @@ RUSSIAN_INVASION_PATH = RAW_DATA_DIR / "RussianInvasion.csv"
 # Generated label mappings.
 UNIQUE_CATEGORIES_PATH = PROCESSED_DATA_DIR / "unique_categories.json"
 UNIQUE_LOCATIONS_PATH = PROCESSED_DATA_DIR / "unique_locations.json"
+CATEGORY_TO_CAMEO_PATH = PROCESSED_DATA_DIR / "category_to_cameo.json"
 LOCATION_TO_FIPS_PATH = PROCESSED_DATA_DIR / "location_to_fips.json"
 UNIQUE_FIPS_LOCATIONS_PATH = PROCESSED_DATA_DIR / "unique_fips_locations.json"
 

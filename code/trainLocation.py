@@ -3,7 +3,6 @@ import sys
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
 import ast
-import csv
 import json
 import random
 import uuid
@@ -21,10 +20,10 @@ sys.path.insert(
 )
 from project_config import (
     CORPUS_PATH,
-    FIPS_CODES_PATH,
     LOCATION_TO_FIPS_PATH,
     MODELS_DIR,
 )
+from helpers import countLines, getFipCodes
 
 TRAIN_HEAD = True
 LEARNING_RATE_HEAD = 1e-4
@@ -48,29 +47,6 @@ if torch.cuda.is_available():
 else:
     device = torch.device("cpu")
 print(f"Using device: {device}")
-
-
-def getFipCodes():
-    with open(FIPS_CODES_PATH, "r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        fipCodes = {}
-        for row in reader:
-            fips = row["FIPS 10-4"].strip()
-            countryName = row["Name"].strip()
-            if fips and fips != "-":
-                fipCodes[fips] = countryName
-    return list(fipCodes.keys()), list(fipCodes.values())
-
-
-def countLines(path):
-    total = 0
-    lastByte = b""
-    with open(path, "rb") as f:
-        while chunk := f.read(8 * 1024 * 1024):
-            total += chunk.count(b"\n")
-            lastByte = chunk[-1:]
-    return total + (1 if lastByte and lastByte != b"\n" else 0)
-
 
 fipCodes, countryNames = getFipCodes()
 fipCodeCount = len(fipCodes)
