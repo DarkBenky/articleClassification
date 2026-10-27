@@ -8,11 +8,14 @@ from collections import defaultdict
 import requests
 
 from addArticles import addToDataset
+from categoryLabels import validateCategories
 from groupLocations import flipCodeToName
+from project_config import VALIDATE_PATH
 
 CHAT_URL = "http://localhost:8013/v1/chat/completions"
 MODELS_URL = "http://localhost:8013/v1/models"
 MIN_WORD_COUNT = 50
+GENERATE_VALIDATION_DATASET = True
 
 try:
     from langdetect import detect as _lang_detect
@@ -223,6 +226,8 @@ if __name__ == "__main__":
         "EMOTIONAL",
     ]
 
+    validateCategories(SUBJECTS, "generator subjects")
+
     model = getModel()
     model_tag = model.rsplit("/", 1)[-1]
     fips_items = list(flipCodeToName.items())
@@ -274,12 +279,20 @@ if __name__ == "__main__":
                 if leaks_location(article_text, location):
                     stats["indirect_leaks"] += 1
 
-            addToDataset({
-                "text": article_text,
-                "location": fips_code,
-                "category": subject,
-                "model": model_tag,
-            })
+            if GENERATE_VALIDATION_DATASET:
+                addToDataset({
+                                "text": article_text,
+                                "location": fips_code,
+                                "category": subject,
+                                "model": model_tag,
+                            }, VALIDATE_PATH)
+            else:
+                addToDataset({
+                    "text": article_text,
+                    "location": fips_code,
+                    "category": subject,
+                    "model": model_tag,
+                })
             fips_counts[fips_code] += 1
             pair_counts[(fips_code, subject)] += 1
             stats["counter"] += 1

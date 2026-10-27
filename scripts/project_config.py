@@ -16,6 +16,9 @@ ARTIFACTS_DIR = REPO_ROOT / "artifacts"
 # External, large datasets shared by preprocessing, tokenization, and training.
 DATA_ROOT = Path("/media/user/2TB")
 CORPUS_PATH = DATA_ROOT / "preprocessed_data.txt"
+VALIDATE_PATH = DATA_ROOT / "validation_data.txt"
+CLEAN_CORPUS_PATH = DATA_ROOT / "clean_corpus.txt"
+ARTICLE_HASHES_PATH = DATA_ROOT / "article_hashes.pickle"
 TOKENIZED_DIR = DATA_ROOT / "tokenizedtext"
 RAW_ARTICLES_DIR = DATA_ROOT / "raw_articles"
 HF_CACHE_DIR = DATA_ROOT / "huggingface_cache"

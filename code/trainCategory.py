@@ -29,7 +29,7 @@ from helpers import countLines, getCameoCodes
 
 TRAIN_HEAD = True
 LEARNING_RATE_HEAD = 1e-4
-TRAIN_BASE = False
+TRAIN_BASE = True
 LEARNING_RATE_BASE = 1e-5
 BATCH_SIZE = 32
 EPOCHS = 3
