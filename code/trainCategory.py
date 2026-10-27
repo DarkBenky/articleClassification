@@ -1,3 +1,5 @@
+# TODO: modify the model so input of head is last vector + 4 vectors that network choses from the embedding model
+
 import os
 import sys
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
