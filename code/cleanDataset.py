@@ -8,7 +8,9 @@ import pickle
 import random
 import re
 import sys
+import threading
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
 
 import requests
@@ -23,12 +25,24 @@ from project_config import (
 )
 from categoryLabels import loadCameoCodes
 
+RESUME_PATH = "./resume.txt"
+FAILED_PATH = "./failed.txt"
+BATCH_SIZE = 8196
+
 load_dotenv(REPO_ROOT / ".env")
 
 CAME_CODES, CAMEO_NAMES = loadCameoCodes()
 NAME_BY_CODE = dict(zip(CAME_CODES, CAMEO_NAMES))
 
+def shortName(name):
+    name = re.split(r"\s*[\(\-\u2013]\s*", name)[0].strip(" ,.")
+    return " ".join(name.split()[:3])
+
+SHORT_NAME_BY_CODE = {code: shortName(name) for code, name in NAME_BY_CODE.items()}
+
 def chunkCodes(codes, maxSize):
+    if not codes:
+        return []
     count = (len(codes) + maxSize - 1) // maxSize
     size = (len(codes) + count - 1) // count
     return [codes[i:i + size] for i in range(0, len(codes), size)]
@@ -37,24 +51,41 @@ LEAF_CODES = [
     code for code in CAME_CODES
     if len(code) >= 3 and not any(other != code and other.startswith(code) for other in CAME_CODES)
 ]
-CATEGORY_CHUNKS = chunkCodes(LEAF_CODES, 255)
+TOPIC_CODES = [code for code in CAME_CODES if len(code) == 3 and 210 <= int(code) <= 227]
 
-CHUNK_SIZE = 8196
+# category question: "topic" = 18 GENERAL NEWS TOPICS, "leaf" = all leaf codes, "off" = skip
+CATEGORY_MODE = "topic"
+CATEGORY_CODES = {"topic": TOPIC_CODES, "leaf": LEAF_CODES, "off": []}[CATEGORY_MODE]
+
 MIN_WORD_COUNT = 40
 MIN_QUALITY = 0.5
 MIN_LABEL_CONFIDENCE = 0.7
 MIN_CATEGORY_CONFIDENCE = 0.7
 JUDGE_URL = "https://openrouter.ai/api/alpha/decisions"
-JUDGE_MODEL = "baseten/mammoth-1:free"
+JUDGE_MODELS = [
+    ("perplexity/pplx-decider-v1.2", 255),
+    ("cloudflare/clef-flash", 26),
+]
 JUDGE_MAX_CHARS = 8192
+judgeModelIndex = 0
+judgeModelLock = threading.Lock()
+totalCost = 0.0
+costLock = threading.Lock()
+failedCalls = 0
+failedLock = threading.Lock()
 
-def readChunks(chunkSize):
+def readChunks(chunkSize, skipLines = 0):
     with open(CORPUS_PATH, encoding="utf-8") as f:
+        for _ in range(skipLines):
+            if not f.readline():
+                return
+        index = skipLines
         while True:
             lines = list(islice(f, chunkSize))
             if not lines:
                 return
-            records = [ast.literal_eval(line) for line in lines]
+            records = [(index + i, ast.literal_eval(line)) for i, line in enumerate(lines)]
+            index += len(lines)
             random.shuffle(records)
             yield records
 
@@ -74,47 +105,63 @@ def judgeText(text, label):
     apiKey = os.environ.get("OPENROUTER_API_KEY", "")
     if not apiKey:
         raise ValueError("OPENROUTER_API_KEY is not set")
-    body = {
-        "model": JUDGE_MODEL,
-        "state": text[:JUDGE_MAX_CHARS],
-        "questions": {
-            "quality": {
-                "type": "noul",
-                "instructions": "Is this high quality news article text?",
-                "criteria": {
-                    "true": "Well-formed reporting prose about a real event",
-                    "false": "Navigation, boilerplate, paywall or cookie notice, listing, truncated stub, or incoherent text",
-                },
+    questions = {
+        "quality": {
+            "type": "noul",
+            "instructions": "Is this high quality news article text?",
+            "criteria": {
+                "true": "Well-formed reporting prose about a real event",
+                "false": "Navigation, boilerplate, paywall or cookie notice, listing, truncated stub, or incoherent text",
             },
-            "label_correct": {
-                "type": "noul",
-                "instructions": f"Does the article support the assigned category label '{label}'?",
-                "criteria": {
-                    "true": f"The article is primarily about {label}",
-                    "false": "The article is about something else, or the label is a placeholder",
-                },
+        },
+        "label_correct": {
+            "type": "noul",
+            "instructions": f"Does the article support the assigned category label '{label}'?",
+            "criteria": {
+                "true": f"The article is primarily about {label}",
+                "false": "The article is about something else, or the label is a placeholder",
             },
         },
     }
-    for index, chunk in enumerate(CATEGORY_CHUNKS):
-        body["questions"][f"category_{index}"] = {
-            "type": "choice",
-            "instructions": "Which category best describes this article?",
-            "criteria": {code: NAME_BY_CODE[code] for code in chunk},
-        }
-    response = requests.post(
-        JUDGE_URL,
-        headers={
-            "Authorization": f"Bearer {apiKey}",
-            "Content-Type": "application/json",
-        },
-        json=body,
-        timeout=60,
-    )
-    response.raise_for_status()
-    answers = response.json()["answers"]
+    global judgeModelIndex, totalCost
+    while True:
+        with judgeModelLock:
+            model, maxOptions = JUDGE_MODELS[judgeModelIndex]
+        chunks = chunkCodes(CATEGORY_CODES, maxOptions)
+        body = {"model": model, "state": text[:JUDGE_MAX_CHARS], "questions": dict(questions)}
+        for index, chunk in enumerate(chunks):
+            body["questions"][f"category_{index}"] = {
+                "type": "choice",
+                "instructions": "Which category best describes this article?",
+                "criteria": {code: SHORT_NAME_BY_CODE[code] for code in chunk},
+            }
+        response = requests.post(
+            JUDGE_URL,
+            headers={
+                "Authorization": f"Bearer {apiKey}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+            timeout=60,
+        )
+        reason = response.text.lower()
+        if response.status_code == 404 or (
+            response.status_code == 400
+            and any(word in reason for word in ("does not exist", "only accepts", "at most"))
+        ):
+            with judgeModelLock:
+                if judgeModelIndex >= len(JUDGE_MODELS) - 1:
+                    raise RuntimeError(f"no judge model available: {response.text[:200]}")
+                judgeModelIndex += 1
+            continue
+        response.raise_for_status()
+        break
+    payload = response.json()
+    answers = payload["answers"]
+    with costLock:
+        totalCost += payload.get("usage", {}).get("cost", 0.0)
     chosen, chosenProb = "", 0.0
-    for index in range(len(CATEGORY_CHUNKS)):
+    for index in range(len(chunks)):
         answer = answers[f"category_{index}"]
         prob = answer["probabilities"].get(answer["choice"], 0.0)
         if prob > chosenProb:
@@ -131,7 +178,7 @@ def judgeText(text, label):
 # ask decision model once:
 # q = is this text high quality news article? [noul]
 # x = is this category correct? [noul] prob
-# cat = select correct category [all specific CODES.csv categories, generic parents excluded]
+# cat = select correct category [CATEGORY_MODE: topic = 18 GENERAL NEWS TOPICS (210-227), leaf = every leaf CODES.csv code, off = keep original]
 # if q < MIN_QUALITY:
 #    skip
 # if x < MIN_LABEL_CONFIDENCE and cat prob >= MIN_CATEGORY_CONFIDENCE:
@@ -158,32 +205,80 @@ def saveHashes():
 
 atexit.register(saveHashes)
 
-def processChunk(chunk):
+def judgeSafe(item):
+    index, digest, record, text = item
+    global failedCalls
+    try:
+        return judgeText(text, record.get("label", ""))
+    except Exception as error:
+        with failedLock:
+            failedCalls += 1
+        print(f"judge failed on line {index}: {type(error).__name__}: {error}")
+        return None
+
+def processChunk(chunk, maxParallel = 8):
     hashes = loadHashes()
+    claimed = set()
     kept = 0
+    failed = []
     CLEAN_CORPUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CLEAN_CORPUS_PATH, "a", encoding="utf-8") as out:
-        for record in chunk:
-            text = record.get("text")
-            if not isinstance(text, str):
-                continue
-            text = removeRedundantWhitespace(
-                removeSpecialCharacters(removeHtmlTags(text))
-            )
-            if len(text.split()) < MIN_WORD_COUNT:
-                continue
-            digest = hashlib.sha256(text.lower().encode("utf-8")).hexdigest()
-            if digest in hashes:
-                continue
-            verdict = judgeText(text, record.get("label", ""))
-            if verdict["quality"] < MIN_QUALITY:
-                continue
-            hashes.add(digest)
-            cleaned = dict(record)
-            cleaned["text"] = text
-            if verdict["labelCorrect"] < MIN_LABEL_CONFIDENCE and verdict["categoryProb"] >= MIN_CATEGORY_CONFIDENCE:
-                cleaned["labelOriginal"] = cleaned.get("label")
-                cleaned["label"] = verdict["category"]
-            out.write(repr(cleaned) + "\n")
-            kept += 1
+
+    pending = []
+    for index, record in chunk:
+        text = record.get("text")
+        if not isinstance(text, str):
+            continue
+        text = removeRedundantWhitespace(
+            removeSpecialCharacters(removeHtmlTags(text))
+        )
+        if len(text.split()) < MIN_WORD_COUNT:
+            continue
+        digest = hashlib.sha256(text.lower().encode("utf-8")).hexdigest()
+        if digest in hashes or digest in claimed:
+            continue
+        claimed.add(digest)
+        pending.append((index, digest, record, text))
+
+    with open(CLEAN_CORPUS_PATH, "a", encoding="utf-8") as out, ThreadPoolExecutor(maxParallel) as pool:
+        for start in range(0, len(pending), maxParallel):
+            batch = pending[start:start + maxParallel]
+            for (index, digest, record, text), verdict in zip(batch, pool.map(judgeSafe, batch)):
+                if verdict is None:
+                    failed.append(index)
+                    continue
+                if verdict["quality"] < MIN_QUALITY:
+                    continue
+                hashes.add(digest)
+                cleaned = dict(record)
+                cleaned["text"] = text
+                if verdict["labelCorrect"] < MIN_LABEL_CONFIDENCE and verdict["categoryProb"] >= MIN_CATEGORY_CONFIDENCE:
+                    cleaned["labelOriginal"] = cleaned.get("label")
+                    cleaned["label"] = verdict["category"]
+                out.write(repr(cleaned) + "\n")
+                kept += 1
+            out.flush()
+
+    if failed:
+        with open(FAILED_PATH, "a", encoding="utf-8") as out:
+            for index in failed:
+                out.write(str(index) + "\n")
     return kept
+
+if __name__ == "__main__":
+    # load resume doc
+    resumeLine = 0
+    if os.path.exists(RESUME_PATH):
+        resumeLine = int(open(RESUME_PATH).read().strip())
+
+    processed = resumeLine
+    print(f"category mode {CATEGORY_MODE} ({len(CATEGORY_CODES)} codes), model {JUDGE_MODELS[judgeModelIndex][0]}")
+    # process chunks, resume from last processed line
+    for chunk in readChunks(BATCH_SIZE, resumeLine):
+        kept = processChunk(chunk)
+        processed += len(chunk)
+        saveHashes()
+        with open(RESUME_PATH, "w", encoding="utf-8") as f:
+            f.write(str(processed))
+        print(f"Kept {kept} records, processed {processed}, failed {failedCalls}, cost ${totalCost:.4f}")
+
+
