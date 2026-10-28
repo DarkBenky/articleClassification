@@ -27,7 +27,19 @@ def readChunks(chunkSize):
             random.shuffle(records)
             yield records
 
-# remove special characters, remove html tags, remove redacted whitespace
+def removeSpecialCharacters(text):
+    pass
+
+def removeHtmlTags(text):
+    pass
+
+def removeRedundantWhitespace(text):
+    pass
+
+def judgeText(text):
+    pass
+
+# remove special characters, remove html tags, remove redundant whitespace
 # ask decision model if relevant
 # q = is this text high quality news article? 
 # x = is this category correct?
@@ -39,3 +51,4 @@ def readChunks(chunkSize):
 # save to cleaned corpus
 # save hash of this article to avoid duplicates
 def processChunk(chunk):
+    pass
