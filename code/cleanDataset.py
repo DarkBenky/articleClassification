@@ -9,6 +9,7 @@ import random
 import re
 import sys
 import threading
+import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
@@ -28,6 +29,7 @@ from categoryLabels import loadCameoCodes
 RESUME_PATH = "./resume.txt"
 FAILED_PATH = "./failed.txt"
 BATCH_SIZE = 8196
+MAX_PARALLEL = 8
 
 load_dotenv(REPO_ROOT / ".env")
 
@@ -67,6 +69,8 @@ JUDGE_MODELS = [
     ("cloudflare/clef-flash", 26),
 ]
 JUDGE_MAX_CHARS = 8192
+RETRY_STATUS = (429, 500, 502, 503, 504)
+MAX_RETRIES = 6
 judgeModelIndex = 0
 judgeModelLock = threading.Lock()
 totalCost = 0.0
@@ -208,15 +212,28 @@ atexit.register(saveHashes)
 def judgeSafe(item):
     index, digest, record, text = item
     global failedCalls
-    try:
-        return judgeText(text, record.get("label", ""))
-    except Exception as error:
-        with failedLock:
-            failedCalls += 1
-        print(f"judge failed on line {index}: {type(error).__name__}: {error}")
-        return None
+    delay = 2.0
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return judgeText(text, record.get("label", ""))
+        except Exception as error:
+            response = getattr(error, "response", None)
+            status = getattr(response, "status_code", 0)
+            if status in RETRY_STATUS and attempt < MAX_RETRIES:
+                wait = delay + random.uniform(0, 1)
+                try:
+                    wait = max(wait, float(response.headers.get("Retry-After", 0)))
+                except (TypeError, ValueError):
+                    pass
+                time.sleep(wait)
+                delay = min(delay * 2, 60)
+                continue
+            with failedLock:
+                failedCalls += 1
+            print(f"judge failed on line {index}: {type(error).__name__}: {error}")
+            return None
 
-def processChunk(chunk, maxParallel = 8):
+def processChunk(chunk, maxParallel = MAX_PARALLEL):
     hashes = loadHashes()
     claimed = set()
     kept = 0
@@ -271,10 +288,10 @@ if __name__ == "__main__":
         resumeLine = int(open(RESUME_PATH).read().strip())
 
     processed = resumeLine
-    print(f"category mode {CATEGORY_MODE} ({len(CATEGORY_CODES)} codes), model {JUDGE_MODELS[judgeModelIndex][0]}")
+    print(f"category mode {CATEGORY_MODE} ({len(CATEGORY_CODES)} codes), model {JUDGE_MODELS[judgeModelIndex][0]}, parallel {MAX_PARALLEL}")
     # process chunks, resume from last processed line
     for chunk in readChunks(BATCH_SIZE, resumeLine):
-        kept = processChunk(chunk)
+        kept = processChunk(chunk, MAX_PARALLEL)
         processed += len(chunk)
         saveHashes()
         with open(RESUME_PATH, "w", encoding="utf-8") as f:
