@@ -19,9 +19,11 @@ sys.path.insert(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")),
 )
 from project_config import (
+    CLEAN_CORPUS_PATH,
     CORPUS_PATH,
     LOCATION_TO_FIPS_PATH,
     MODELS_DIR,
+    VALIDATE_PATH,
 )
 from helpers import countLines, getFipCodes
 
@@ -37,6 +39,10 @@ LOG_EVERY = 10
 SAMPLE_LOG_EVERY = 1000
 DROPOUT = 0.2
 CHECKPOINT_EVERY = 100
+VALIDATION_SIZE = 512
+VALIDATE_EVERY = 200
+
+TRAIN_PATH = CORPUS_PATH
 
 if torch.cuda.is_available():
     deviceIndex = max(
@@ -58,8 +64,8 @@ labelToIndex.update({code: i for i, code in enumerate(fipCodes)})
 with open(LOCATION_TO_FIPS_PATH, encoding="utf-8") as f:
     locationToFips = json.load(f)
 
-print(f"Counting records in {CORPUS_PATH}...")
-totalRecords = countLines(CORPUS_PATH)
+print(f"Counting records in {TRAIN_PATH}...")
+totalRecords = countLines(TRAIN_PATH)
 fullChunks, remainder = divmod(totalRecords, CHUNK_SIZE)
 stepsPerEpoch = fullChunks * ((CHUNK_SIZE + BATCH_SIZE - 1) // BATCH_SIZE)
 if remainder:
@@ -120,7 +126,7 @@ def resolvePredictionToLocationNames(predictions, topK=5):
 
 
 def readChunks(chunkSize):
-    with open(CORPUS_PATH, encoding="utf-8") as f:
+    with open(TRAIN_PATH, encoding="utf-8") as f:
         while True:
             lines = list(islice(f, chunkSize))
             if not lines:
@@ -148,6 +154,49 @@ if TRAIN_BASE:
     base.gradient_checkpointing_enable()
 allParams = [p for g in groups for p in g["params"]]
 optimizer = torch.optim.AdamW(groups)
+
+
+def loadValidationSet(limit=VALIDATION_SIZE):
+    rows = []
+    if not VALIDATE_PATH.exists():
+        print(f"Validation set not found: {VALIDATE_PATH}")
+        return rows
+    with open(VALIDATE_PATH, encoding="utf-8") as f:
+        for line in f:
+            try:
+                record = ast.literal_eval(line)
+            except (ValueError, SyntaxError):
+                continue
+            fips = locationToFips.get(record.get("location"), record.get("location"))
+            if fips in labelToIndex:
+                rows.append((record["text"], labelToIndex[fips]))
+            if len(rows) >= limit:
+                break
+    print(f"Validation records: {len(rows):,}")
+    return rows
+
+
+def validationLoss(rows):
+    if not rows:
+        return None
+    base.eval()
+    head.eval()
+    total = 0.0
+    correct = 0
+    with torch.no_grad():
+        for i in range(0, len(rows), BATCH_SIZE):
+            chunk = rows[i:i + BATCH_SIZE]
+            y = torch.tensor([label for _, label in chunk], device=device)
+            with torch.autocast(device.type, dtype=torch.bfloat16):
+                logits = runModel([text for text, _ in chunk]).float()
+            total += lossFn(logits, y).item() * len(chunk)
+            correct += (logits.argmax(-1) == y).sum().item()
+    base.train(TRAIN_BASE)
+    head.train(TRAIN_HEAD)
+    return total / len(rows), correct / len(rows)
+
+
+valRows = loadValidationSet()
 
 
 def trainStep(batch):
@@ -199,6 +248,10 @@ wandb.init(
         "sample_log_every": SAMPLE_LOG_EVERY,
         "total_records": totalRecords,
         "total_steps": totalSteps,
+        "train_path": str(TRAIN_PATH),
+        "validation_path": str(VALIDATE_PATH),
+        "validation_records": len(valRows),
+        "validate_every": VALIDATE_EVERY,
     },
 )
 
@@ -298,11 +351,19 @@ for epoch in range(EPOCHS):
                 print(f"step {step}/{totalSteps} window loss {windowAvg:.4f} saved {bestModelPath}")
             windowLoss = 0.0
             windowSteps = 0
+        if step == 1 or step % VALIDATE_EVERY == 0:
+            result = validationLoss(valRows)
+            if result:
+                logData["val_loss"], logData["val_acc"] = result
         wandb.log(logData, step=step)
     if epochBatches == 0:
         continue
     epochLoss /= epochBatches
     print(f"epoch {epoch} avg loss {epochLoss:.4f}")
+    result = validationLoss(valRows)
+    if result:
+        wandb.log({"val_loss": result[0], "val_acc": result[1], "epoch": epoch}, step=step)
+        print(f"epoch {epoch} val loss {result[0]:.4f} acc {result[1]:.3f}")
 
 if windowSteps:
     windowAvg = windowLoss / windowSteps

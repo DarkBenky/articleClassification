@@ -10,12 +10,31 @@ import requests
 from addArticles import addToDataset
 from categoryLabels import validateCategories
 from groupLocations import flipCodeToName
-from project_config import VALIDATE_PATH
+from project_config import CORPUS_PATH, VALIDATE_PATH, CLEAN_CORPUS_PATH
 
-CHAT_URL = "http://localhost:8013/v1/chat/completions"
-MODELS_URL = "http://localhost:8013/v1/models"
+# Big model (router :8013 -> Strata / Qwen3.8-Flash-Next).
+# CHAT_URL = "http://localhost:8013/v1/chat/completions"
+# MODELS_URL = "http://localhost:8013/v1/models"
+
+# Small model (Qwen2.5-Coder-7B-Instruct Q5_K_M, llama-server-zeta :8030).
+# To use it, comment out the two lines above and uncomment these.
+# NOTE: measured ~5.4 s/article but leaks the country name in 6/6 indirect
+# prompts and only 4/14 articles honoured the 200-400 word length.
+CHAT_URL = "http://localhost:8030/v1/chat/completions"
+MODELS_URL = "http://localhost:8030/v1/models"
+
 MIN_WORD_COUNT = 50
-GENERATE_VALIDATION_DATASET = True
+
+# Where generated articles are appended. Change OUTPUT_TARGET to switch:
+#   "clean"      -> CLEAN_CORPUS_PATH  (cleaned / judged corpus)
+#   "corpus"     -> CORPUS_PATH        (raw preprocessed corpus)
+#   "validation" -> VALIDATE_PATH      (held-out set the trainers log val_loss on)
+OUTPUT_TARGET = "clean"
+OUTPUT_PATHS = {
+    "clean": CLEAN_CORPUS_PATH,
+    "corpus": CORPUS_PATH,
+    "validation": VALIDATE_PATH,
+}
 
 try:
     from langdetect import detect as _lang_detect
@@ -228,11 +247,18 @@ if __name__ == "__main__":
 
     validateCategories(SUBJECTS, "generator subjects")
 
+    if OUTPUT_TARGET not in OUTPUT_PATHS:
+        raise ValueError(
+            f"OUTPUT_TARGET must be one of {list(OUTPUT_PATHS)}, got {OUTPUT_TARGET!r}"
+        )
+    outputPath = OUTPUT_PATHS[OUTPUT_TARGET]
+
     model = getModel()
     model_tag = model.rsplit("/", 1)[-1]
     fips_items = list(flipCodeToName.items())
 
     print(f"Using local model: {model}")
+    print(f"Writing to: {outputPath} (OUTPUT_TARGET={OUTPUT_TARGET!r})")
     print("Running single-threaded — press Ctrl+C to stop.")
     print("-" * 60)
 
@@ -279,20 +305,12 @@ if __name__ == "__main__":
                 if leaks_location(article_text, location):
                     stats["indirect_leaks"] += 1
 
-            if GENERATE_VALIDATION_DATASET:
-                addToDataset({
-                                "text": article_text,
-                                "location": fips_code,
-                                "category": subject,
-                                "model": model_tag,
-                            }, VALIDATE_PATH)
-            else:
-                addToDataset({
-                    "text": article_text,
-                    "location": fips_code,
-                    "category": subject,
-                    "model": model_tag,
-                })
+            addToDataset({
+                "text": article_text,
+                "location": fips_code,
+                "category": subject,
+                "model": model_tag,
+            }, outputPath)
             fips_counts[fips_code] += 1
             pair_counts[(fips_code, subject)] += 1
             stats["counter"] += 1
