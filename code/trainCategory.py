@@ -36,12 +36,12 @@ LEARNING_RATE_BASE = 1e-5
 BATCH_SIZE = 32
 EPOCHS = 10
 CHUNK_SIZE = 4096
-MAX_LENGTH = 512
+MAX_LENGTH = 1024
 LOG_EVERY = 10
-SAMPLE_LOG_EVERY = 1000
+SAMPLE_LOG_EVERY = -1
 DROPOUT = 0.2
 CHECKPOINT_EVERY = 100
-VALIDATION_SIZE = 1024
+VALIDATION_SIZE = 512
 VALIDATE_EVERY = 32
 
 TRAIN_PATH = CLEAN_CORPUS_PATH
@@ -255,6 +255,7 @@ wandb.init(
         "validation_path": str(VALIDATE_PATH),
         "validation_records": len(valRows),
         "validate_every": VALIDATE_EVERY,
+        "max_lenght": MAX_LENGTH,
     },
 )
 
