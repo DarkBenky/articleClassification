@@ -44,7 +44,8 @@ CHECKPOINT_EVERY = 100
 VALIDATION_SIZE = 512
 VALIDATE_EVERY = 32
 
-TRAIN_PATH = CLEAN_CORPUS_PATH
+# TRAIN_PATH = CLEAN_CORPUS_PATH
+# TRAIN_PATH = CORPUS_PATH
 
 if torch.cuda.is_available():
     deviceIndex = max(
@@ -255,21 +256,17 @@ wandb.init(
         "validation_path": str(VALIDATE_PATH),
         "validation_records": len(valRows),
         "validate_every": VALIDATE_EVERY,
-        "max_lenght": MAX_LENGTH,
+        "max_length": MAX_LENGTH,
     },
 )
 
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 bestModelPath = MODELS_DIR / f"category_classifier_torch_{run_name}.pt"
-bestWindowLoss = float("inf")
-windowLoss = 0.0
-windowSteps = 0
+bestWindowValLoss = float("inf")
+windowValLoss = 0.0
+windowValCount = 0
 sampleTable = wandb.Table(
     columns=["step", "epoch", "text", "expected", "predicted", "confidence"],
-    log_mode="MUTABLE",
-)
-saveTable = wandb.Table(
-    columns=["step", "epoch", "window_loss"],
     log_mode="MUTABLE",
 )
 
@@ -287,6 +284,7 @@ def saveIfBest(avgLoss, epoch, step, currentBest):
         "epoch": epoch,
         "step": step,
         "loss": avgLoss,
+        "val_loss": avgLoss,
     }
     if TRAIN_BASE:
         checkpoint["base"] = base.state_dict()
@@ -316,8 +314,6 @@ for epoch in range(EPOCHS):
         step += 1
         epochLoss += loss
         epochBatches += 1
-        windowLoss += loss
-        windowSteps += 1
         skipRate = skipped / seen * 100 if seen else 0.0
         progressPct = step / totalSteps * 100 if totalSteps else 0.0
         logData = {
@@ -327,38 +323,41 @@ for epoch in range(EPOCHS):
             "skip_pct": skipRate,
             "progress_pct": progressPct,
         }
-        if step % LOG_EVERY == 0 or step % SAMPLE_LOG_EVERY == 0:
+        if step % LOG_EVERY == 0 or (SAMPLE_LOG_EVERY > 0 and step % SAMPLE_LOG_EVERY == 0):
             text, expected, predicted, confidence = sample
             preview = " ".join(text.split())[:500]
             expectedLabel = f"{cameoNames[expected]} ({cameoCodes[expected]})"
             predictedLabel = f"{cameoNames[predicted]} ({cameoCodes[predicted]})"
-            if step % SAMPLE_LOG_EVERY == 0:
+            if SAMPLE_LOG_EVERY > 0 and step % SAMPLE_LOG_EVERY == 0:
                 sampleTable.add_data(step, epoch, preview, expectedLabel, predictedLabel, confidence)
                 logData["sample_predictions"] = sampleTable
             if step % LOG_EVERY == 0:
                 print(
                     f"epoch {epoch} step {step}/{totalSteps} ({progressPct:.1f}%) "
                     f"loss {loss:.4f} acc {acc:.3f} skip {skipRate:.1f}%\n"
-                    f"  expected {expectedLabel} | predicted {predictedLabel} {confidence:.3f}\n"
-                    f"  text {preview[:100]}"
+                    # f"  expected {expectedLabel} | predicted {predictedLabel} {confidence:.3f}\n"
+                    # f"  text {preview[:100]}"
                 )
-        if step % CHECKPOINT_EVERY == 0 and windowSteps:
-            windowAvg = windowLoss / windowSteps
-            bestWindowLoss, saved = saveIfBest(windowAvg, epoch, step, bestWindowLoss)
-            logData["window_loss"] = windowAvg
-            logData["best_window_loss"] = bestWindowLoss
-            logData["checkpoint_saved"] = int(saved)
-            if saved:
-                saveTable.add_data(step, epoch, windowAvg)
-                logData["checkpoint_saves"] = saveTable
-                logData["saved_step"] = step
-                print(f"step {step}/{totalSteps} window loss {windowAvg:.4f} saved {bestModelPath}")
-            windowLoss = 0.0
-            windowSteps = 0
         if step == 1 or step % VALIDATE_EVERY == 0:
             result = validationLoss(valRows)
             if result:
-                logData["val_loss"], logData["val_acc"] = result
+                valLoss, valAcc = result
+                logData["val_loss"] = valLoss
+                logData["val_acc"] = valAcc
+                windowValLoss += valLoss
+                windowValCount += 1
+        if step % CHECKPOINT_EVERY == 0 and windowValCount:
+            windowAvg = windowValLoss / windowValCount
+            bestWindowValLoss, saved = saveIfBest(windowAvg, epoch, step, bestWindowValLoss)
+            logData["window_val_loss"] = windowAvg
+            logData["best_window_val_loss"] = bestWindowValLoss
+            logData["window_val_evals"] = windowValCount
+            logData["checkpoint_saved"] = int(saved)
+            if saved:
+                logData["saved_step"] = step
+                print(f"step {step}/{totalSteps} window val loss {windowAvg:.4f} saved {bestModelPath}")
+            windowValLoss = 0.0
+            windowValCount = 0
         wandb.log(logData, step=step)
     if epochBatches == 0:
         continue
@@ -366,22 +365,23 @@ for epoch in range(EPOCHS):
     print(f"epoch {epoch} avg loss {epochLoss:.4f}")
     result = validationLoss(valRows)
     if result:
-        wandb.log({"val_loss": result[0], "val_acc": result[1], "epoch": epoch}, step=step)
-        print(f"epoch {epoch} val loss {result[0]:.4f} acc {result[1]:.3f}")
+        valLoss, valAcc = result
+        windowValLoss += valLoss
+        windowValCount += 1
+        wandb.log({"val_loss": valLoss, "val_acc": valAcc, "epoch": epoch}, step=step)
+        print(f"epoch {epoch} val loss {valLoss:.4f} acc {valAcc:.3f}")
 
-if windowSteps:
-    windowAvg = windowLoss / windowSteps
-    bestWindowLoss, saved = saveIfBest(windowAvg, epoch, step, bestWindowLoss)
+if windowValCount:
+    windowAvg = windowValLoss / windowValCount
+    bestWindowValLoss, saved = saveIfBest(windowAvg, epoch, step, bestWindowValLoss)
     finalLog = {
-        "final_window_loss": windowAvg,
-        "best_window_loss": bestWindowLoss,
+        "final_window_val_loss": windowAvg,
+        "best_window_val_loss": bestWindowValLoss,
         "checkpoint_saved": int(saved),
     }
     if saved:
-        saveTable.add_data(step, epoch, windowAvg)
-        finalLog["checkpoint_saves"] = saveTable
         finalLog["saved_step"] = step
-        print(f"step {step}/{totalSteps} final window loss {windowAvg:.4f} saved {bestModelPath}")
+        print(f"step {step}/{totalSteps} final window val loss {windowAvg:.4f} saved {bestModelPath}")
     wandb.log(finalLog, step=step)
 
 base.eval()

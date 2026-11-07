@@ -1,5 +1,7 @@
 # TODO
 
+- [ ] randomize the dataset order
+
 - [ ] Process all news from GDELT Events (<http://data.gdeltproject.org/events/index.html>)
     - The old loader was removed during cleanup; reimplement it using `data/raw/CODES.csv` for CAMEO labels.
 
